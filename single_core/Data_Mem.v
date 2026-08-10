@@ -1,7 +1,7 @@
-module Data_Memory(A,WD,clk,WE,RD);
+module Data_Memory(A,WD,clk,rst,WE,RD);
 
     input [31:0] A,WD;
-    input clk,WE;
+    input clk,rst,WE;
 
     output [31:0] RD;
 
