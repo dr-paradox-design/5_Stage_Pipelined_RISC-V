@@ -11,12 +11,14 @@ module Single_Cycle_Top(clk,rst);
 
     input clk,rst;
 
-    wire [31:0] PC_Top, RD_Instr, RD1_Top, Imm_Ext_Top, ALU_Result_Top, Read_Data_Top, PCPlus4;
-    wire [2:0] ALU_Control_Top;
-    wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch;
-    wire [1:0] ImmSrc;
-    wire [31:0] WriteData;
+        wire [31:0] PC_Top, RD_Instr, RD1_Top, RD2_Top, Imm_Ext_Top, SrcB_Top, ALU_Result_Top, Read_Data_Top, PCPlus4;
+        wire [2:0] ALU_Control_Top;
+        wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch;
+        wire [1:0] ImmSrc;
+        wire [31:0] WriteData;
 
+        assign SrcB_Top = ALUSrc ? Imm_Ext_Top : RD2_Top;
+        assign WriteData = ResultSrc ? Read_Data_Top : ALU_Result_Top;
 
     PC_Module PC_Module(
         .clk(clk),
@@ -42,23 +44,18 @@ module Single_Cycle_Top(clk,rst);
         .WE3(RegWrite),
         .WD3(WriteData),
         .A1(RD_Instr[19:15]),
-        .A2(),
+        .A2(RD_Instr[24:20]),
         .A3(RD_Instr[11:7]),
         .RD1(RD1_Top),
-        .RD2()
+        .RD2(RD2_Top)
     );
 
-
-    Sign_Extend Sign_Extend(
-        .In(RD_Instr[31:20]),
-        .Imm_Ext(Imm_Ext_Top)
-    );
 
     ALU ALU(
         .A(RD1_Top),
-        .B(Imm_Ext_Top),
-        .ALU_Control(ALU_Control_Top),
-        .ALU_Result(ALU_Result_Top),
+        .B(SrcB_Top),
+        .ALUControl(ALU_Control_Top),
+        .Result(ALU_Result_Top),
         .Z(),
         .N(),
         .C(),
@@ -83,7 +80,7 @@ module Single_Cycle_Top(clk,rst);
         .rst(rst),
         .WE(MemWrite),
         .A(ALU_Result_Top),
-        .WD(WriteData),
+        .WD(RD2_Top),
         .RD(Read_Data_Top)
     );
 

@@ -13,21 +13,22 @@ module Control_Unit_Top(Op,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch,func
     wire [1:0]ALUOp;
 
     main_decoder main_decoder(
-                .Op(Op),
-                .RegWrite(RegWrite),
-                .ImmSrc(ImmSrc),
-                .MemWrite(MemWrite),
-                .ResultSrc(ResultSrc),
-                .Branch(Branch),
-                .ALUSrc(ALUSrc),
-                .ALUOp(ALUOp)
+        .op(Op),
+        .zero(1'b0),
+        .RegWrite(RegWrite),
+        .MemWrite(MemWrite),
+        .ImmSrc(ImmSrc),
+        .ALUSrc(ALUSrc),
+        .ResultSrc(ResultSrc),
+        .PCSrc(Branch),
+        .ALUOp(ALUOp)
     );
 
     ALU_decoder ALU_decoder(
                             .ALUOp(ALUOp),
                             .funct3(funct3),
-                            .funct7(funct7),
-                            .op(Op),
+                            .funct7(funct7[5]),
+                            .op5(Op[5]),
                             .ALUControl(ALUControl)
     );
 

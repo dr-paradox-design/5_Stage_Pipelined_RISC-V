@@ -1,7 +1,7 @@
 module ALU(A,B,ALUControl,Result,Z,N,C,V);
     //declaring inputs and outputs
     input [31:0] A,B;
-    input [3:0] ALUControl;
+    input [2:0] ALUControl;
     output [31:0] Result;
     output Z,N,C,V;
 

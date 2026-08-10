@@ -9,7 +9,7 @@ module Data_Memory(A,WD,clk,rst,WE,RD);
     reg [31:0] Mem[1023:0]; //declaring memory of 1024 words of 32 bits each
 
 //read
-assign RD = (WE ==1'b0) ? Data_MEM[A] : 32'h00000000; 
+assign RD = (WE == 1'b0) ? Mem[A[31:2]] : 32'h00000000;
 
 //write
 always @(posedge clk) begin

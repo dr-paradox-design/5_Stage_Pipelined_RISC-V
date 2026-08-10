@@ -13,13 +13,13 @@ assign RD1 = (!rst) ? 32'h00000000 : Register[A1]; //if rst is 0 then RD1=0 else
 assign RD2 = (!rst) ? 32'h00000000 : Register[A2];
 
 always @(posedge clk) begin
-    if (!rst) begin
+    if (rst) begin
 
         if(WE3)
         begin
             Register[A3] <= WD3; //if WE3 is 1 then write WD3 to Register[A3]
         end
-end
+    end
 end
 
 endmodule
