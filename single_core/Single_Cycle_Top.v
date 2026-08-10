@@ -49,7 +49,11 @@ module Single_Cycle_Top(clk,rst);
         .RD1(RD1_Top),
         .RD2(RD2_Top)
     );
-
+    
+    Sign_Extend Sign_Extend(
+        .In(RD_Instr),
+        .Imm_Ext(Imm_Ext_Top)
+    );
 
     ALU ALU(
         .A(RD1_Top),

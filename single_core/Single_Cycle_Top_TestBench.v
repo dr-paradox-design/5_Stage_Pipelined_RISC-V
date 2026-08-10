@@ -9,7 +9,7 @@ module Single_Cycle_Top_TestBench();
 
     initial begin
         $dumpfile("Single_Cycle_Top_TestBench.vcd");
-        $dumpvars(0,Single_Cycle_Top);
+        $dumpvars(0, Single_Cycle_Top_TestBench);
     end
 
     always
@@ -19,11 +19,11 @@ module Single_Cycle_Top_TestBench();
 
     initial begin
        rst = 1'b0;
-       #150;
+       #100;
        rst = 1'b1;
-       #500;
+       #300;
        $finish;
     
     end
 
-endmodule 
+endmodule
