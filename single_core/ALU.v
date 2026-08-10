@@ -1,4 +1,4 @@
-module alu(A,B,ALUControl,Result,Z,N,C,V);
+module ALU(A,B,ALUControl,Result,Z,N,C,V);
     //declaring inputs and outputs
     input [31:0] A,B;
     input [3:0] ALUControl;
@@ -34,7 +34,7 @@ module alu(A,B,ALUControl,Result,Z,N,C,V);
     //addition&subtraction operation then concatination(combine multiple bit or signal into one larger signal using curly braces) of the carry out and sum to get the final result 
     assign {Cout, sum} = A + mux1 + ALUControl[0];
 
-    assign slt = {31'b00000000000000000000000000000000, sum[31]}; //if sum is negative then slt=1 else slt=0
+    assign slt = {31'b0000000000000000000000000000000, sum[31]}; //if sum is negative then slt=1 else slt=0
 
     //designing 4by1 mux
     assign mux_2 = (ALUControl[2:0] == 3'b000) ? sum : 

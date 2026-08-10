@@ -18,4 +18,6 @@ always @(posedge clk) begin
         Mem[A] <= WD; //if WE is 1 then write WD to Mem[A]
     end
 
+end
+
 endmodule

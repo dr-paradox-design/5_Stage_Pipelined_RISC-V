@@ -1,6 +1,6 @@
-module Reg_file(A1,A2,A3,WD3,WE3,clk,rst,RD1,RD2);
-input clk,rst;
-input[7:0] A1,A2,A3;
+module Register_file(A1,A2,A3,WD3,WE3,clk,rst,RD1,RD2);
+input clk,rst,WE3;
+input[4:0] A1,A2,A3;
 input[31:0] WD3;
 
 output[31:0] RD1,RD2;
@@ -19,6 +19,7 @@ always @(posedge clk) begin
         begin
             Register[A3] <= WD3; //if WE3 is 1 then write WD3 to Register[A3]
         end
+end
 end
 
 endmodule

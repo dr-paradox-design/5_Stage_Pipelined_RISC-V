@@ -1,20 +1,24 @@
 `include "PC.v"
-`include "Instruction_Memory.v"
-`include "Reg_File.v"
+`include "instruction_Memory.v"
+`include "Register_file.v"
 `include "Sign_Extend.v"
 `include "ALU.v"
 `include "Control_Unit_Top.v"
-`include "Data_Memory.v"
+`include "Data_Mem.v"
 `include "PC_Adder.v"
 
 module Single_Cycle_Top(clk,rst);  
 
     input clk,rst;
 
-    wire [31:0] PC_Top,RD_Instr,RD1_Top, Imm_Ext_Top , ALU_Control_Top, ALU_Result_Top,Read_Data_Top, PCPlus4;
-    wire RegWrite;
+    wire [31:0] PC_Top, RD_Instr, RD1_Top, Imm_Ext_Top, ALU_Result_Top, Read_Data_Top, PCPlus4;
+    wire [2:0] ALU_Control_Top;
+    wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch;
+    wire [1:0] ImmSrc;
+    wire [31:0] WriteData;
 
-    PC_Module PC(
+
+    PC_Module PC_Module(
         .clk(clk),
         .rst(rst),
         .PC(PC_Top),
@@ -27,16 +31,16 @@ module Single_Cycle_Top(clk,rst);
         .c(PCPlus4)
     );
 
-    Instruction_Memory Instruction_Memory(
+    instruction_Memory instruction_Memory(
         .rst(rst),
         .A(PC_Top),
-        .RD(),
+        .RD(RD_Instr)
     );
-    Register_file Register_File(
+    Register_file Register_file(
         .clk(clk),
         .rst(rst),
         .WE3(RegWrite),
-        .WD3(Read_Data_Top),
+        .WD3(WriteData),
         .A1(RD_Instr[19:15]),
         .A2(),
         .A3(RD_Instr[11:7]),
@@ -63,23 +67,23 @@ module Single_Cycle_Top(clk,rst);
 
     Control_Unit_Top Control_Unit(
         .Op(RD_Instr[6:0]),
-        .RegWrite(),
-        .ImmSrc(),
-        .ALUSrc(),
-        .MemWrite(),
-        .ResultSrc(),
-        .Branch(),
+        .RegWrite(RegWrite),
+        .ImmSrc(ImmSrc),
+        .ALUSrc(ALUSrc),
+        .MemWrite(MemWrite),
+        .ResultSrc(ResultSrc),
+        .Branch(Branch),
         .funct3(RD_Instr[14:12]),
-        .funct7(),
+        .funct7(RD_Instr[31:25]),
         .ALUControl(ALU_Control_Top)
     );
 
     Data_Memory Data_Memory(
         .clk(clk),
         .rst(rst),
-        .WE(),
+        .WE(MemWrite),
         .A(ALU_Result_Top),
-        .WD(),
+        .WD(WriteData),
         .RD(Read_Data_Top)
     );
 
