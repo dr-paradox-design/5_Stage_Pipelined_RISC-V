@@ -1,5 +1,5 @@
 $date
-	Tue Aug 11 00:08:04 2026
+	Tue Aug 11 23:06:38 2026
 $end
 $version
 	Icarus Verilog
@@ -33,16 +33,16 @@ $var wire 1 3 ALUSrc $end
 $scope module ALU $end
 $var wire 32 4 B [31:0] $end
 $var wire 1 5 C $end
-$var wire 1 6 V $end
-$var wire 32 7 a_and_b [31:0] $end
-$var wire 32 8 a_or_b [31:0] $end
-$var wire 32 9 not_b [31:0] $end
-$var wire 32 : sum [31:0] $end
-$var wire 1 ; slt $end
-$var wire 1 < mux_2 $end
-$var wire 32 = mux1 [31:0] $end
-$var wire 1 > Z $end
-$var wire 32 ? Result [31:0] $end
+$var wire 32 6 Result [31:0] $end
+$var wire 1 7 V $end
+$var wire 32 8 a_and_b [31:0] $end
+$var wire 32 9 a_or_b [31:0] $end
+$var wire 32 : not_b [31:0] $end
+$var wire 32 ; sum [31:0] $end
+$var wire 32 < slt [31:0] $end
+$var wire 32 = mux_2 [31:0] $end
+$var wire 32 > mux1 [31:0] $end
+$var wire 1 ? Z $end
 $var wire 1 @ N $end
 $var wire 1 A Cout $end
 $var wire 3 B ALUControl [2:0] $end
@@ -164,16 +164,16 @@ b0 C
 b0 B
 0A
 0@
-b0 ?
-1>
+1?
+b0 >
 b0 =
-0<
-0;
-b0 :
-b11111111111111111111111111111111 9
+b0 <
+b0 ;
+b11111111111111111111111111111111 :
+b0 9
 b0 8
-b0 7
-06
+07
+b0 6
 05
 b0 4
 03
@@ -199,12 +199,74 @@ $end
 #50
 0!
 #100
+1!
+#125
+x7
+x?
+x@
+bx00 8
+b11 :
+b11111111111111111111111111111100 >
+b0x <
+bx 1
+bx 6
+bx U
+bx =
+x5
+1&
+13
+b11111111111111111111111111111100 $
+b11111111111111111111111111111100 4
+bx ;
+xA
+b111111111111111111111111111111xx 9
+bx #
+bx `
+bx )
+bx V
+bx a
+bx *
+bx C
+bx b
+b11111111111111111111111111111100 .
+b11111111111111111111111111111100 d
+b1 M
+1K
+1%
+b1111111 F
+b10 E
+b10 J
+b11 D
+b11 P
+b110 _
+b11100 ^
+b1001 ]
+b11111111110001001010001100000011 (
+b11111111110001001010001100000011 c
+b11111111110001001010001100000011 f
+1"
+#150
+0!
+#200
+bx 8
+bx 9
+bx :
+bx >
+x&
+x3
 bx 2
 bx B
 bx I
 bx O
+bx $
+bx 4
+bx .
+bx d
+xK
+bx M
 xL
 x-
+x%
 xR
 bx /
 bx G
@@ -212,32 +274,6 @@ bx S
 bx H
 bx N
 bx T
-b1000 ,
-b1000 Y
-b1000 [
-b100 +
-b100 Z
-b100 \
-b100 e
-x&
-x6
-x>
-x3
-bx #
-bx `
-x;
-b0x 1
-b0x ?
-b0x U
-x<
-bx .
-bx d
-bx M
-xK
-x%
-x5
-bx 9
-bx =
 bx F
 bx E
 bx J
@@ -246,26 +282,20 @@ bx P
 bx _
 bx ^
 bx ]
-bx :
-xA
-bx 8
-bx 7
-bx $
-bx 4
 bx (
 bx c
 bx f
-bx *
-bx C
-bx b
-bx )
-bx V
-bx a
+b1000 ,
+b1000 Y
+b1000 [
+b100 +
+b100 Z
+b100 \
+b100 e
 1!
-1"
-#150
+#250
 0!
-#200
+#300
 b1100 ,
 b1100 Y
 b1100 [
@@ -274,9 +304,9 @@ b1000 Z
 b1000 \
 b1000 e
 1!
-#250
+#350
 0!
-#300
+#400
 b10000 ,
 b10000 Y
 b10000 [
@@ -285,14 +315,4 @@ b1100 Z
 b1100 \
 b1100 e
 1!
-#350
-0!
-#400
-b10100 ,
-b10100 Y
-b10100 [
-b10000 +
-b10000 Z
-b10000 \
-b10000 e
-1!
+#425

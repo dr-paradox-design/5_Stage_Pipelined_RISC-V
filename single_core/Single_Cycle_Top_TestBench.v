@@ -21,7 +21,7 @@ module Single_Cycle_Top_TestBench();
        rst = 1'b0;
        #125;
        rst = 1'b1;
-       #300;
+       #500;
        $finish;
     
     end

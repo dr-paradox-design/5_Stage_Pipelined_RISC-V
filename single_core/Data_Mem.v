@@ -15,7 +15,7 @@ assign RD = (WE == 1'b0) ? Mem[A[31:2]] : 32'h00000000;
 always @(posedge clk) begin
     if(WE)
     begin
-        Mem[A] <= WD; //if WE is 1 then write WD to Mem[A]
+        Mem[A[31:2]] <= WD; //if WE is 1 then write WD to Mem[A]
     end
 
 end
