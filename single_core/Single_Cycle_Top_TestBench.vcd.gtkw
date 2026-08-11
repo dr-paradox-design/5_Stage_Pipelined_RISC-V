@@ -1,24 +1,22 @@
 [*]
 [*] GTKWave Analyzer v3.3.108 (w)1999-2020 BSI
-[*] Mon Aug 10 18:28:11 2026
+[*] Tue Aug 11 17:01:46 2026
 [*]
 [dumpfile] "C:\Users\swastik sethi\Desktop\projects\5_Stage_Pipelined_RISC-V\single_core\Single_Cycle_Top_TestBench.vcd"
-[dumpfile_mtime] "Mon Aug 10 18:19:58 2026"
-[dumpfile_size] 5098
-[savefile] "C:\Users\swastik sethi\Desktop\projects\5_Stage_Pipelined_RISC-V\single_core\single_cycle.vcd.gtkw"
+[dumpfile_mtime] "Mon Aug 10 18:38:04 2026"
+[dumpfile_size] 4541
+[savefile] "C:\Users\swastik sethi\Desktop\projects\5_Stage_Pipelined_RISC-V\single_core\Single_Cycle_Top_TestBench.vcd.gtkw"
 [timestart] 0
-[size] 3200 1693
-[pos] 2181 -216
-*-5.400000 190 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[size] 1920 1093
+[pos] -1 -1
+*-7.043387 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [treeopen] Single_Cycle_Top_TestBench.
 [treeopen] Single_Cycle_Top_TestBench.Single_Cycle_Top.
 [treeopen] Single_Cycle_Top_TestBench.Single_Cycle_Top.Control_Unit.
 [sst_width] 288
-[signals_width] 275
+[signals_width] 309
 [sst_expanded] 1
-[sst_vpaned_height] 535
-@200
--
+[sst_vpaned_height] 326
 @28
 Single_Cycle_Top_TestBench.Single_Cycle_Top.Register_file.clk
 Single_Cycle_Top_TestBench.Single_Cycle_Top.Register_file.rst
@@ -37,13 +35,13 @@ Single_Cycle_Top_TestBench.Single_Cycle_Top.instruction_Memory.RD[31:0]
 @1000200
 -Instruction Memory
 @800200
--PC Adder
+-PC Adder 
 @22
 Single_Cycle_Top_TestBench.Single_Cycle_Top.PC_Adder.a[31:0]
 Single_Cycle_Top_TestBench.Single_Cycle_Top.PC_Adder.b[31:0]
 Single_Cycle_Top_TestBench.Single_Cycle_Top.PC_Adder.c[31:0]
 @1000200
--PC Adder
+-PC Adder 
 @800200
 -Sign Extend
 @22
@@ -53,8 +51,6 @@ Single_Cycle_Top_TestBench.Single_Cycle_Top.Sign_Extend.Imm_Ext[31:0]
 -Sign Extend
 @800200
 -Register File
-@200
--
 @22
 Single_Cycle_Top_TestBench.Single_Cycle_Top.Register_file.A1[4:0]
 Single_Cycle_Top_TestBench.Single_Cycle_Top.Register_file.A2[4:0]
@@ -80,8 +76,6 @@ Single_Cycle_Top_TestBench.Single_Cycle_Top.ALU.Result[31:0]
 -ALU
 @800200
 -Control Unit
-@200
--
 @22
 Single_Cycle_Top_TestBench.Single_Cycle_Top.Control_Unit.Op[6:0]
 @28
@@ -90,15 +84,5 @@ Single_Cycle_Top_TestBench.Single_Cycle_Top.Control_Unit.ALUControl[2:0]
 Single_Cycle_Top_TestBench.Single_Cycle_Top.Control_Unit.RegWrite
 @1000200
 -Control Unit
-@800200
--Data Memory
-@200
--
-@22
-Single_Cycle_Top_TestBench.Single_Cycle_Top.Data_Memory.A[31:0]
-@23
-Single_Cycle_Top_TestBench.Single_Cycle_Top.Data_Memory.RD[31:0]
-@1000200
--Data Memory
 [pattern_trace] 1
 [pattern_trace] 0

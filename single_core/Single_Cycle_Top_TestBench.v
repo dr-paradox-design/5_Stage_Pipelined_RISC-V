@@ -19,7 +19,7 @@ module Single_Cycle_Top_TestBench();
 
     initial begin
        rst = 1'b0;
-       #100;
+       #125;
        rst = 1'b1;
        #300;
        $finish;
