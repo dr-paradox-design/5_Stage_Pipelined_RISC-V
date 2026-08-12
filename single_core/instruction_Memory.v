@@ -14,6 +14,8 @@ module instruction_Memory(A, rst, RD);
     
     initial begin
         Mem[0] = 32'hFFC4A303; 
+        //        Mem[0] = 32'h00000000; 
+
     end
 
 endmodule
