@@ -93,7 +93,7 @@ The testbench drives `clk`/`rst` and preloads a test instruction into instructio
 - [ ] Pipeline registers (IF/ID, ID/EX, EX/MEM, MEM/WB)
 - [ ] Hazard detection unit + load-use stall logic
 - [ ] EX/MEM and MEM/WB forwarding paths
-- [ ] Branch flush logic
+- [ ] Branch flush logic.  
 - [ ] PYNQ-Z2 FPGA synthesis and on-board verification
 
 ## Author
