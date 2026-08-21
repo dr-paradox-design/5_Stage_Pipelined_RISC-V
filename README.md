@@ -97,7 +97,8 @@ FPGA verification on a **PYNQ-Z2**.
 │   └── RISC-V Project.md   # Design notes / project journal
 ├── single_core/            # Complete single-cycle RV32I implementation + testbench
 │   ├── *.v                  # Datapath and control modules
-│   ├── Single_Cycle_Top_TestBench.v
+│   ├── program.hex          # Test program loaded via $readmemh
+│   ├── Single_Cycle_Top_TestBench.v            # Self-checking regression testbench
 │   └── Single_Cycle_Top_TestBench.vcd(.gtkw)  # Simulation waveform + GTKWave session
 └── src/
     └── Fetch_Cycle          # Placeholder for pipeline IF-stage work (not started yet)
@@ -121,8 +122,40 @@ vvp out.vvp
 gtkwave Single_Cycle_Top_TestBench.vcd
 ```
 
-The testbench drives `clk`/`rst` and preloads a test instruction into instruction memory
-(`instruction_Memory.v`) — edit the `initial` block there to load your own test programs.
+The testbench is **self-checking** — it runs `program.hex` and asserts the expected final
+register state, so a run either prints `RESULT: PASS` or names the register that went wrong:
+
+```
+=== single-cycle RV32I regression (program.hex) ===
+  ok  : x1 = 5
+  ...
+  ok  : x12 = 7
+RESULT: PASS - all 12 checks passed
+```
+
+`vvp` also prints a `$readmemh: Not enough words in the file for the requested range`
+warning — that one is expected and harmless (the program is much shorter than the 1024-word
+instruction memory, and the remainder is deliberately zero-filled with NOPs).
+
+### Test program
+
+Programs live in [`single_core/program.hex`](single_core/program.hex) — one 32-bit
+instruction per line in hex, `//` comments allowed — and are loaded with `$readmemh`, so
+**you no longer have to edit and recompile the RTL to run a different program.** The
+committed program exercises every supported instruction:
+
+| Instruction | Covered by |
+|---|---|
+| `addi` | `x1 = 5`, `x2 = 3` |
+| `add` / `sub` | `x3 = 8`, `x4 = 2` |
+| `and` / `or` | `x5 = 1`, `x6 = 7` |
+| `slt` | `x7 = 1` (true), `x8 = 0` (false) |
+| `sw` / `lw` | stores `x3` to `mem[0]`, reads it back into `x9` |
+| `beq` not taken | falls through, so `x10 = 1` |
+| `beq` taken | skips `addi x11, x0, 99`, so `x11` stays `0` and `x12 = 7` |
+
+If you change the program, update the `check_reg` expectations at the bottom of
+`Single_Cycle_Top_TestBench.v` to match.
 
 ## Recent Fixes
 
@@ -141,11 +174,27 @@ The testbench drives `clk`/`rst` and preloads a test instruction into instructio
 - **Register file reset now actually clears registers.** `Register_file.v` previously only
   forced *reads* to zero while `rst` was asserted, without ever clearing the underlying
   `Register` array. It now synchronously zeroes all 32 registers on reset.
+- **Verification is now self-checking.** The testbench previously just dumped a waveform for
+  manual GTKWave inspection while instruction memory held a single hardcoded instruction.
+  It now runs a 15-instruction program covering every supported opcode and asserts the final
+  register state, reporting `PASS`/`FAIL`. Verified to actually catch regressions by
+  re-introducing the branch bug and confirming the run fails on `x11`.
+- **Programs are loaded from a file.** `instruction_Memory.v` now uses
+  `$readmemh("program.hex", Mem)` instead of hardcoded `Mem[0] = ...` assignments, so
+  swapping test programs no longer means editing and recompiling the RTL.
+- **The documented build command actually works.** `iverilog -o out.vvp
+  Single_Cycle_Top_TestBench.v` used to fail with `Unknown module type: Single_Cycle_Top`,
+  because nothing pulled the top level into the testbench. Added the missing `` `include ``.
+- **Memories start at zero instead of X.** Both instruction and data memory are zero-filled
+  at time 0, so unwritten locations read as `0` (a harmless NOP in instruction memory)
+  rather than smearing X through the register file and waveform.
 
 ## Roadmap
 
 - [x] Single-cycle RV32I datapath (fetch, decode, execute, memory, writeback in one cycle)
 - [x] Testbench + waveform verification
+- [x] Branch resolution (zero flag → PC-source mux → branch target)
+- [x] Self-checking regression covering every supported instruction
 - [ ] Pipeline registers (IF/ID, ID/EX, EX/MEM, MEM/WB)
 - [ ] Hazard detection unit + load-use stall logic
 - [ ] EX/MEM and MEM/WB forwarding paths

@@ -1,0 +1,20 @@
+// RV32I regression program for the single-cycle core.
+// Loaded by instruction_Memory.v via $readmemh; one 32-bit word per line.
+// Expected final register state is asserted in Single_Cycle_Top_TestBench.v.
+//
+// addr  encoding   instruction         | effect
+00500093   // 0x00  addi x1, x0, 5      | x1 = 5
+00300113   // 0x04  addi x2, x0, 3      | x2 = 3
+002081b3   // 0x08  add  x3, x1, x2     | x3 = 8
+40208233   // 0x0c  sub  x4, x1, x2     | x4 = 2
+0020f2b3   // 0x10  and  x5, x1, x2     | x5 = 5 & 3 = 1
+0020e333   // 0x14  or   x6, x1, x2     | x6 = 5 | 3 = 7
+001123b3   // 0x18  slt  x7, x2, x1     | x7 = (3 < 5) = 1
+0020a433   // 0x1c  slt  x8, x1, x2     | x8 = (5 < 3) = 0
+00302023   // 0x20  sw   x3, 0(x0)      | mem[0] = 8
+00002483   // 0x24  lw   x9, 0(x0)      | x9 = 8
+00208463   // 0x28  beq  x1, x2, +8     | NOT taken (5 != 3)
+00100513   // 0x2c  addi x10, x0, 1     | x10 = 1  (proves fall-through)
+00108463   // 0x30  beq  x1, x1, +8     | TAKEN (5 == 5)
+06300593   // 0x34  addi x11, x0, 99    | MUST be skipped -> x11 stays 0
+00700613   // 0x38  addi x12, x0, 7     | x12 = 7  (resumes at target)
