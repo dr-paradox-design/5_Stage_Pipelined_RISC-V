@@ -1,5 +1,5 @@
 $date
-	Tue Aug 11 23:06:38 2026
+	Fri Aug 21 22:53:06 2026
 $end
 $version
 	Icarus Verilog
@@ -112,19 +112,21 @@ $var wire 32 a RD2 [31:0] $end
 $var wire 32 b RD1 [31:0] $end
 $upscope $end
 $scope module Sign_Extend $end
-$var wire 32 c In [31:0] $end
-$var wire 32 d Imm_Ext [31:0] $end
+$var wire 2 c ImmSrc [1:0] $end
+$var wire 32 d In [31:0] $end
+$var wire 32 e Imm_Ext [31:0] $end
 $upscope $end
 $scope module instruction_Memory $end
-$var wire 32 e A [31:0] $end
+$var wire 32 f A [31:0] $end
 $var wire 1 " rst $end
-$var wire 32 f RD [31:0] $end
+$var wire 32 g RD [31:0] $end
 $upscope $end
 $upscope $end
 $upscope $end
 $enddefinitions $end
 #0
 $dumpvars
+b0 g
 b0 f
 b0 e
 b0 d
@@ -204,46 +206,50 @@ $end
 x7
 x?
 x@
-bx00 8
-b11 :
-b11111111111111111111111111111100 >
+bx #
+bx `
+b0x000 8
+b11111111111111111111111111110111 :
+b1000 >
 b0x <
 bx 1
 bx 6
 bx U
 bx =
 x5
-1&
-13
-b11111111111111111111111111111100 $
-b11111111111111111111111111111100 4
+b0 '
+b0 W
+b1000 $
+b1000 4
 bx ;
 xA
-b111111111111111111111111111111xx 9
-bx #
-bx `
+bx1xxx 9
+13
+b1000 .
+b1000 e
 bx )
 bx V
 bx a
 bx *
 bx C
 bx b
-b11111111111111111111111111111100 .
-b11111111111111111111111111111100 d
-b1 M
-1K
-1%
-b1111111 F
+b10 M
+1L
+1-
+b1 /
+b1 G
+b1 S
+b1 c
 b10 E
 b10 J
-b11 D
-b11 P
-b110 _
-b11100 ^
+b100011 D
+b100011 P
+b1000 _
+b110 ^
 b1001 ]
-b11111111110001001010001100000011 (
-b11111111110001001010001100000011 c
-b11111111110001001010001100000011 f
+b11001001010010000100011 (
+b11001001010010000100011 d
+b11001001010010000100011 g
 1"
 #150
 0!
@@ -252,16 +258,18 @@ bx 8
 bx 9
 bx :
 bx >
-x&
-x3
+bx '
+bx W
 bx 2
 bx B
 bx I
 bx O
 bx $
 bx 4
+x&
+x3
 bx .
-bx d
+bx e
 xK
 bx M
 xL
@@ -271,6 +279,7 @@ xR
 bx /
 bx G
 bx S
+bx c
 bx H
 bx N
 bx T
@@ -283,15 +292,15 @@ bx _
 bx ^
 bx ]
 bx (
-bx c
-bx f
+bx d
+bx g
 b1000 ,
 b1000 Y
 b1000 [
 b100 +
 b100 Z
 b100 \
-b100 e
+b100 f
 1!
 #250
 0!
@@ -302,7 +311,7 @@ b1100 [
 b1000 +
 b1000 Z
 b1000 \
-b1000 e
+b1000 f
 1!
 #350
 0!
@@ -313,6 +322,28 @@ b10000 [
 b1100 +
 b1100 Z
 b1100 \
-b1100 e
+b1100 f
 1!
-#425
+#450
+0!
+#500
+b10100 ,
+b10100 Y
+b10100 [
+b10000 +
+b10000 Z
+b10000 \
+b10000 f
+1!
+#550
+0!
+#600
+b11000 ,
+b11000 Y
+b11000 [
+b10100 +
+b10100 Z
+b10100 \
+b10100 f
+1!
+#625
