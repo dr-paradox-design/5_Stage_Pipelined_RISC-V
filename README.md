@@ -40,6 +40,39 @@ load/store, and branch instructions.
 **Instructions supported:** R-type (`add`, `sub`, `and`, `or`, `slt`), I-type (`addi`, `lw`),
 S-type (`sw`), B-type (`beq`).
 
+#### Datapath Diagram
+
+```mermaid
+flowchart TD
+    PC["PC_Module\n(PC.v)"] -->|PC| PCADD["PC_Adder\nPC + 4"]
+    PC -->|PC| IMEM["instruction_Memory\n(instruction_Memory.v)"]
+    PCADD -->|PCPlus4| PC
+
+    IMEM -->|instr| REGFILE["Register_file\n(Register_file.v)\nrs1 / rs2 / rd"]
+    IMEM -->|instr| SEXT["Sign_Extend\n(Sign_Extend.v)"]
+    IMEM -->|opcode / funct3 / funct7| CTRL["Control_Unit_Top\n(main_decoder + ALU_decoder)"]
+
+    REGFILE -->|RD1| ALU["ALU\n(ALU.v)"]
+    REGFILE -->|RD2| SRCB{{ALUSrc Mux}}
+    SEXT -->|Imm_Ext| SRCB
+    SRCB -->|SrcB| ALU
+
+    CTRL -.ALUControl.-> ALU
+    CTRL -.ALUSrc.-> SRCB
+    CTRL -.RegWrite.-> REGFILE
+    CTRL -.MemWrite.-> DMEM
+    CTRL -.ResultSrc.-> WDMUX
+
+    ALU -->|ALU_Result| DMEM["Data_Memory\n(Data_Mem.v)"]
+    REGFILE -->|RD2| DMEM
+    ALU -->|ALU_Result| WDMUX{{ResultSrc Mux}}
+    DMEM -->|Read_Data| WDMUX
+    WDMUX -->|WriteData / WD3| REGFILE
+```
+
+> **Note:** `Branch`/`Z` (zero flag) are decoded but not yet wired into a PC-source mux, so
+> taken branches don't redirect fetch yet — see [Roadmap](#roadmap).
+
 ### 🚧 5-Stage Pipeline (`src/`)
 Work in progress. Target architecture:
 
