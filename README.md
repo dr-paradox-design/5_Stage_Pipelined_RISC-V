@@ -9,6 +9,10 @@ hazard detection, stalling and flushing — with FPGA verification on a PYNQ-Z2 
 >
 > Developed and documented openly as I build it, so pipeline stages land incrementally.
 
+Full write-up — datapath, control tables, the branch-resolution post-mortem, verification
+strategy and pipeline plan — is in
+[**docs/RV32I_Single_Cycle_Core.pdf**](docs/RV32I_Single_Cycle_Core.pdf).
+
 ## Architecture
 
 The single-cycle datapath as currently wired (dotted lines are control signals):
@@ -127,7 +131,9 @@ does **not** require editing or recompiling the RTL. If you change the program, 
 ```
 .
 ├── docs/
-│   └── RISC-V Project.md    # Design notes / project journal
+│   ├── RISC-V Project.md              # Design notes / project journal
+│   ├── RV32I_Single_Cycle_Core.pdf    # Full project documentation
+│   └── generate_pdf.py                # Regenerates the PDF above
 ├── single_core/             # Single-cycle RV32I implementation + regression
 │   ├── *.v                  # Datapath and control modules
 │   ├── program.hex          # Test program, loaded via $readmemh
