@@ -57,12 +57,14 @@ FPGA verification on a **PYNQ-Z2**.
 
 ```
 .
-├── single_core/          # Complete single-cycle RV32I implementation + testbench
-│   ├── *.v                # Datapath and control modules
+├── docs/
+│   └── RISC-V Project.md   # Design notes / project journal
+├── single_core/            # Complete single-cycle RV32I implementation + testbench
+│   ├── *.v                  # Datapath and control modules
 │   ├── Single_Cycle_Top_TestBench.v
 │   └── Single_Cycle_Top_TestBench.vcd(.gtkw)  # Simulation waveform + GTKWave session
 └── src/
-    └── Fetch_Cycle/       # Pipeline IF-stage scaffold (in progress)
+    └── Fetch_Cycle          # Placeholder for pipeline IF-stage work (not started yet)
 ```
 
 ## Simulation
