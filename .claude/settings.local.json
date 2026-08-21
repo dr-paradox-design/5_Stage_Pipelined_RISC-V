@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"C:\\\\Users\\\\swastik sethi\\\\Desktop\\\\projects\\\\5_Stage_Pipelined_RISC-V\" diff --stat)",
+      "Bash(iverilog -o /tmp/verify.vvp Single_Cycle_Top_TestBench.v Single_Cycle_Top.v)",
+      "Bash(rm -f /tmp/verify.vvp)"
+    ]
+  }
+}

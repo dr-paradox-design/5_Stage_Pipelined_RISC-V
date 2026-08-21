@@ -6,7 +6,10 @@ module Control_Unit_Top(Op,zero,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch
 
     input [6:0]Op,funct7;
     input [2:0]funct3;
-    input zero; //ALU zero flag, used to resolve branches (Branch = branch-opcode & zero)
+    //FIX: added this input. Previously main_decoder's zero port was hardcoded to 1'b0
+    //below, so PCSrc (Branch) = branch-opcode & zero was always 0 and beq could never
+    //take a branch. Now driven by the ALU's real zero flag from Single_Cycle_Top.
+    input zero;
     output RegWrite,ALUSrc,MemWrite,ResultSrc,Branch;
     output [1:0]ImmSrc;
     output [2:0]ALUControl;
@@ -15,7 +18,7 @@ module Control_Unit_Top(Op,zero,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch
 
     main_decoder main_decoder(
         .op(Op),
-        .zero(zero),
+        .zero(zero), //FIX: was hardcoded .zero(1'b0) — see comment on the `zero` input above
         .RegWrite(RegWrite),
         .MemWrite(MemWrite),
         .ImmSrc(ImmSrc),

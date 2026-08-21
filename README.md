@@ -45,8 +45,11 @@ S-type (`sw`), B-type (`beq`).
 ```mermaid
 flowchart TD
     PC["PC_Module\n(PC.v)"] -->|PC| PCADD["PC_Adder\nPC + 4"]
+    PC -->|PC| BADD["Branch_Adder\nPC + Imm_Ext"]
     PC -->|PC| IMEM["instruction_Memory\n(instruction_Memory.v)"]
-    PCADD -->|PCPlus4| PC
+    PCADD -->|PCPlus4| PCMUX{{"PC-source Mux\n(Branch ? target : +4)"}}
+    BADD -->|PCTarget| PCMUX
+    PCMUX -->|PC_Next| PC
 
     IMEM -->|instr| REGFILE["Register_file\n(Register_file.v)\nrs1 / rs2 / rd"]
     IMEM -->|instr| SEXT["Sign_Extend\n(Sign_Extend.v)"]
@@ -55,13 +58,16 @@ flowchart TD
     REGFILE -->|RD1| ALU["ALU\n(ALU.v)"]
     REGFILE -->|RD2| SRCB{{ALUSrc Mux}}
     SEXT -->|Imm_Ext| SRCB
+    SEXT -->|Imm_Ext| BADD
     SRCB -->|SrcB| ALU
 
+    ALU -.Z (zero flag).-> CTRL
     CTRL -.ALUControl.-> ALU
     CTRL -.ALUSrc.-> SRCB
     CTRL -.RegWrite.-> REGFILE
     CTRL -.MemWrite.-> DMEM
     CTRL -.ResultSrc.-> WDMUX
+    CTRL -.Branch (branch-op & Z).-> PCMUX
 
     ALU -->|ALU_Result| DMEM["Data_Memory\n(Data_Mem.v)"]
     REGFILE -->|RD2| DMEM
@@ -69,9 +75,6 @@ flowchart TD
     DMEM -->|Read_Data| WDMUX
     WDMUX -->|WriteData / WD3| REGFILE
 ```
-
-> **Note:** `Branch`/`Z` (zero flag) are decoded but not yet wired into a PC-source mux, so
-> taken branches don't redirect fetch yet — see [Roadmap](#roadmap).
 
 ### 🚧 5-Stage Pipeline (`src/`)
 Work in progress. Target architecture:
@@ -120,6 +123,24 @@ gtkwave Single_Cycle_Top_TestBench.vcd
 
 The testbench drives `clk`/`rst` and preloads a test instruction into instruction memory
 (`instruction_Memory.v`) — edit the `initial` block there to load your own test programs.
+
+## Recent Fixes
+
+- **Branch resolution now works.** Previously `beq` was decoded but never redirected fetch:
+  the ALU's `Z` (zero) flag was left unconnected and `Control_Unit_Top` hardcoded `zero = 0`,
+  and there was no branch-target adder or PC-source mux at all — `PC_Module` only ever
+  received `PC + 4`. Fixed by:
+  - Wiring `ALU.Z` → `Control_Unit_Top`'s new `zero` input (`Single_Cycle_Top.v`,
+    `Control_Unit_Top.v`)
+  - Adding a second `PC_Adder` instance computing `PC + Imm_Ext` (the branch target)
+  - Adding a mux on `PC_Module`'s `PC_NEXT` input selecting the branch target vs. `PC+4`,
+    driven by `Branch` (`Control_Unit_Top`'s `PCSrc = branch-op & zero`)
+  - Verified with a scratch regression program (`addi x1,5` / `addi x2,5` / `beq x1,x2,+8` /
+    `addi x3,99` / `addi x4,7`) confirming the branch is taken, the instruction after it is
+    skipped, and execution resumes correctly at the target.
+- **Register file reset now actually clears registers.** `Register_file.v` previously only
+  forced *reads* to zero while `rst` was asserted, without ever clearing the underlying
+  `Register` array. It now synchronously zeroes all 32 registers on reset.
 
 ## Roadmap
 

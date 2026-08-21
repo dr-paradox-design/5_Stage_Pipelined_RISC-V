@@ -7,7 +7,7 @@ output[31:0] RD1,RD2;
 
 //creation of memory
 reg[31:0] Register[31:0];
-integer i;
+integer i; //FIX: loop variable added for the reset clear-loop below
 
 // read functionality
 assign RD1 = (!rst) ? 32'h00000000 : (A1 == 5'b00000) ? 32'h00000000 : Register[A1];
@@ -15,10 +15,12 @@ assign RD2 = (!rst) ? 32'h00000000 : (A2 == 5'b00000) ? 32'h00000000 : Register[
 
 
 always @(posedge clk) begin
+    //FIX: this if/else reset branch is new. Previously only WE3 writes were handled here
+    //and RD1/RD2 above merely forced *reads* to 0 during reset — the Register array itself
+    //was never actually cleared, so stale values could resurface once rst deasserted.
     if (!rst) begin
-        //synchronous reset: actually clear the register array, not just gate reads
         for (i = 0; i < 32; i = i + 1)
-            Register[i] <= 32'h00000000;
+            Register[i] <= 32'h00000000; //synchronously zero every register on reset
     end
     else begin
         if(WE3 && (A3 != 5'b00000))
