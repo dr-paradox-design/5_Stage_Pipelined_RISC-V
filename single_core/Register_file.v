@@ -7,6 +7,7 @@ output[31:0] RD1,RD2;
 
 //creation of memory
 reg[31:0] Register[31:0];
+integer i;
 
 // read functionality
 assign RD1 = (!rst) ? 32'h00000000 : (A1 == 5'b00000) ? 32'h00000000 : Register[A1];
@@ -14,8 +15,12 @@ assign RD2 = (!rst) ? 32'h00000000 : (A2 == 5'b00000) ? 32'h00000000 : Register[
 
 
 always @(posedge clk) begin
-    if (rst) begin
-
+    if (!rst) begin
+        //synchronous reset: actually clear the register array, not just gate reads
+        for (i = 0; i < 32; i = i + 1)
+            Register[i] <= 32'h00000000;
+    end
+    else begin
         if(WE3 && (A3 != 5'b00000))
         begin
             Register[A3] <= WD3; //if WE3 is 1 then write WD3 to Register[A3]

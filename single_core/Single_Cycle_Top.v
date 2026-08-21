@@ -11,26 +11,35 @@ module Single_Cycle_Top(clk,rst);
 
     input clk,rst;
 
-        wire [31:0] PC_Top, RD_Instr, RD1_Top, RD2_Top, Imm_Ext_Top, SrcB_Top, ALU_Result_Top, Read_Data_Top, PCPlus4;
+        wire [31:0] PC_Top, RD_Instr, RD1_Top, RD2_Top, Imm_Ext_Top, SrcB_Top, ALU_Result_Top, Read_Data_Top, PCPlus4, PCTarget, PC_Next_Top;
         wire [2:0] ALU_Control_Top;
-        wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch;
+        wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch, Zero_Top;
         wire [1:0] ImmSrc;
         wire [31:0] WriteData;
 
         assign SrcB_Top = ALUSrc ? Imm_Ext_Top : RD2_Top;
         assign WriteData = ResultSrc ? Read_Data_Top : ALU_Result_Top;
+        //Branch is Control_Unit_Top's PCSrc output (branch opcode & ALU zero flag) -
+        //selects the branch target on a taken branch, otherwise PC+4
+        assign PC_Next_Top = Branch ? PCTarget : PCPlus4;
 
     PC_Module PC_Module(
         .clk(clk),
         .rst(rst),
         .PC(PC_Top),
-        .PC_NEXT(PCPlus4)        
+        .PC_NEXT(PC_Next_Top)
     );
 
     PC_Adder PC_Adder(
         .a(PC_Top),
         .b(32'h00000004),
         .c(PCPlus4)
+    );
+
+    PC_Adder Branch_Adder(
+        .a(PC_Top),
+        .b(Imm_Ext_Top),
+        .c(PCTarget)
     );
 
     instruction_Memory instruction_Memory(
@@ -61,7 +70,7 @@ module Single_Cycle_Top(clk,rst);
         .B(SrcB_Top),
         .ALUControl(ALU_Control_Top),
         .Result(ALU_Result_Top),
-        .Z(),
+        .Z(Zero_Top),
         .N(),
         .C(),
         .V()
@@ -69,6 +78,7 @@ module Single_Cycle_Top(clk,rst);
 
     Control_Unit_Top Control_Unit(
         .Op(RD_Instr[6:0]),
+        .zero(Zero_Top),
         .RegWrite(RegWrite),
         .ImmSrc(ImmSrc),
         .ALUSrc(ALUSrc),

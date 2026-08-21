@@ -2,10 +2,11 @@
 `include "ALU_decoder.v"
 `include "main_decoder.v"
 
-module Control_Unit_Top(Op,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch,funct3,funct7,ALUControl);
+module Control_Unit_Top(Op,zero,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch,funct3,funct7,ALUControl);
 
     input [6:0]Op,funct7;
     input [2:0]funct3;
+    input zero; //ALU zero flag, used to resolve branches (Branch = branch-opcode & zero)
     output RegWrite,ALUSrc,MemWrite,ResultSrc,Branch;
     output [1:0]ImmSrc;
     output [2:0]ALUControl;
@@ -14,7 +15,7 @@ module Control_Unit_Top(Op,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch,func
 
     main_decoder main_decoder(
         .op(Op),
-        .zero(1'b0),
+        .zero(zero),
         .RegWrite(RegWrite),
         .MemWrite(MemWrite),
         .ImmSrc(ImmSrc),
