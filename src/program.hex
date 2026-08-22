@@ -1,0 +1,130 @@
+// RV32I regression program for the 5-STAGE PIPELINED core.
+// Loaded by instruction_Memory.v via $readmemh; one 32-bit word per line.
+// Expected final register state is asserted in Pipeline_Top_TestBench.v.
+//
+//=============================================================================
+// WHY THIS PROGRAM IS NOT THE SAME FILE AS single_core/program.hex
+//
+// It computes exactly the same 12 results, in the same order, into the same
+// registers. That is on purpose: the two cores must reach an IDENTICAL
+// architectural outcome, so the same 12 checks can be used on both.
+//
+// What differs is the SCHEDULE. This core has no hazard hardware - no
+// forwarding, no stalling, no flushing - so the two hazards below are avoided
+// by hand, with NOPs.
+//
+//-----------------------------------------------------------------------------
+// HAZARD 1 - DATA HAZARD (RAW): a producer needs 3 NOPs before its consumer
+//
+//   Let each instruction be numbered by its slot index i (0,1,2,...). With one
+//   instruction issued per cycle and a 100 ns clock starting at t=0:
+//
+//     instruction i is in  IF  during  (100i, 100i+100)
+//                          ID  during  (100i+100, 100i+200)
+//                          EX  during  (100i+200, 100i+300)
+//                          MEM during  (100i+300, 100i+400)
+//                          WB  during  (100i+400, 100i+500)
+//
+//   Register_file.v writes on the RISING EDGE at the END of WB:
+//        producer p commits at   t = 100p + 500 + 100 = 100p + 600
+//   ...and reads are latched into the ID/EX register at the END of ID:
+//        consumer c samples at   t = 100c + 100 + 100 + 100 = 100c + 300
+//
+//   (the extra +100 in both lines is the one dead cycle at t=0..100 while the
+//   very first instruction is still being fetched)
+//
+//   For the consumer to see the new value we need the write to land STRICTLY
+//   EARLIER than the sample:
+//
+//        100p + 600  <  100c + 300      =>      c  >  p + 3      =>   c >= p+4
+//
+//   c = p+4 means THREE instruction slots sit between them. Hence: 3 NOPs.
+//
+//   Why not 2? Because Register_file.v has no write-through bypass - a read
+//   issued in the same cycle as the write returns the OLD value. If the write
+//   were moved to the falling edge, or a bypass added, this would shrink to 2.
+//   Neither is done here, because single_core/ is frozen and passing.
+//
+//   Once forwarding is built (a later project stage) this gap becomes ZERO,
+//   because the consumer grabs the value off the EX/MEM or MEM/WB wires
+//   instead of waiting for it to reach the register file.
+//
+//-----------------------------------------------------------------------------
+// HAZARD 2 - CONTROL HAZARD: a taken branch needs 2 delay-slot NOPs
+//
+//   A branch is resolved in EX (PCSrcE = BranchE & ZeroE, see
+//   Execute_Cycle.v). The branch at slot i is in EX during (100i+200,
+//   100i+300), so the PC only accepts PCTargetE at the edge t = 100i+300.
+//
+//   Meanwhile fetch never stopped. By that edge it has ALREADY fetched slots
+//   i+1 and i+2 - they are sitting in IF/ID and ID/EX. This build has no flush
+//   logic, so both of them WILL execute.
+//
+//   Therefore the two slots immediately after a taken branch are DELAY SLOTS
+//   and must contain something harmless. NOPs are used here. (Real MIPS made
+//   this part of its ISA and let compilers fill the slot with useful work.)
+//
+//   A NOT-taken branch needs nothing: the two instructions after it were going
+//   to run anyway.
+//
+//-----------------------------------------------------------------------------
+// THE NOP ENCODING
+//   0x00000013 is  addi x0, x0, 0  - the canonical RISC-V NOP. It writes to x0,
+//   which is hardwired to zero, so the write is architecturally invisible. It
+//   is a real instruction that flows through all five stages like any other.
+//=============================================================================
+//
+// idx  addr   encoding   instruction          | why it is here
+00500093   // 0   0x00   addi x1, x0, 5        | x1 = 5
+00300113   // 1   0x04   addi x2, x0, 3        | x2 = 3
+00000013   // 2   0x08   nop                   | \
+00000013   // 3   0x0c   nop                   |  > 3 NOPs so x1 (idx 0) and
+00000013   // 4   0x10   nop                   | /  x2 (idx 1) are committed
+002081b3   // 5   0x14   add  x3, x1, x2       | x3 = 8   (5>=0+4 ok, 5>=1+4 ok)
+40208233   // 6   0x18   sub  x4, x1, x2       | x4 = 2
+0020f2b3   // 7   0x1c   and  x5, x1, x2       | x5 = 5 & 3 = 1
+0020e333   // 8   0x20   or   x6, x1, x2       | x6 = 5 | 3 = 7
+001123b3   // 9   0x24   slt  x7, x2, x1       | x7 = (3 < 5) = 1
+0020a433   // 10  0x28   slt  x8, x1, x2       | x8 = (5 < 3) = 0
+00302023   // 11  0x2c   sw   x3, 0(x0)        | mem[0] = 8  (x3 from idx 5:
+           //                                  |  11 >= 5+4, ok - the six
+           //                                  |  independent ops above double
+           //                                  |  as the required spacing)
+00002483   // 12  0x30   lw   x9, 0(x0)        | x9 = 8. NO NOP needed after the
+           //                                  |  sw: the store commits at the
+           //                                  |  edge ending its MEM cycle and
+           //                                  |  this load reads combinationally
+           //                                  |  during the cycle right after.
+00208463   // 13  0x34   beq  x1, x2, +8       | NOT taken (5 != 3). No delay
+           //                                  |  slots needed for a fall-through.
+00100513   // 14  0x38   addi x10, x0, 1       | x10 = 1 - proves fall-through
+00108863   // 15  0x3c   beq  x1, x1, +16      | TAKEN (5 == 5) -> 0x3c+16 = 0x4c
+00000013   // 16  0x40   nop                   | delay slot 1 - fetched before
+00000013   // 17  0x44   nop                   | delay slot 2 - the branch resolved
+06300593   // 18  0x48   addi x11, x0, 99      | MUST be skipped -> x11 stays 0
+00700613   // 19  0x4c   addi x12, x0, 7       | x12 = 7 - the branch target
+//
+//-----------------------------------------------------------------------------
+// NOTE ON THE BRANCH OFFSET AT idx 15
+//   The single-cycle version of this test used  beq x1,x1,+8  to skip exactly
+//   one instruction. Here the offset is +16, because the two delay slots sit
+//   between the branch and the instruction being skipped:
+//
+//        0x3c  beq  (branch)
+//        0x40  nop     <- runs anyway (delay slot)
+//        0x44  nop     <- runs anyway (delay slot)
+//        0x48  addi x11, x0, 99   <- the one we actually want to skip
+//        0x4c  addi x12, x0, 7    <- target:  0x4c - 0x3c = 16
+//
+//   Encoding check for 0x00108863 against Sign_Extend.v's B-type unscramble
+//   {{19{In[31]}}, In[31], In[7], In[30:25], In[11:8], 1'b0}:
+//     In[31]=0, In[7]=1, In[30:25]=000000, In[11:8]=0000  ->  0_1_000000_0000_0
+//     = 0b10000 = 16.  Correct.
+//-----------------------------------------------------------------------------
+// NOTE ON x11
+//   x11 is never written by this program. It reads back as 0 because
+//   Register_file.v clears all 32 registers on reset. If the branch silently
+//   failed to redirect the PC, idx 18 would run and x11 would become 99 - which
+//   is precisely what makes this a real test of branch behaviour rather than a
+//   test that passes by accident.
+//=============================================================================
