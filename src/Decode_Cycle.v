@@ -41,12 +41,24 @@
 //   diagram - it is one piece of hardware read by one stage and written by
 //   another, four cycles apart.
 //
-// WHAT WE ARE DELIBERATELY NOT DOING YET
-//   Nothing here checks whether the register we are reading is about to be
-//   written by an instruction still in flight. That is a data hazard, and this
-//   build has no hazard hardware at all - the test program in program.hex
-//   spaces dependent instructions apart with NOPs instead. See the header of
-//   src/program.hex for the exact spacing rule and why it is 3 NOPs.
+// RS1E / RS2E - REGISTER NUMBERS, CARRIED PURELY SO EXECUTE CAN FORWARD
+//   RD1D/RD2D above are the register VALUES read this cycle. Execute_Cycle.v
+//   also needs the register NUMBERS (rs1, rs2) themselves, because forwarding
+//   works by comparing "which register does EX still need?" against "which
+//   register did MEM or WB just finish computing?" (RdM / RdW). That
+//   comparison cannot be done with values - only numbers identify WHICH
+//   register a value belongs to. So Rs1E/Rs2E ride the pipe purely as
+//   identifiers; RD1E/RD2E ride alongside them as the (possibly stale) values
+//   that forwarding will override if a hazard is detected downstream.
+//
+// WHAT WE ARE STILL NOT DOING (load-use)
+//   Execute_Cycle.v now forwards EX/MEM and MEM/WB results into EX, which
+//   resolves ordinary RAW hazards with zero stall cycles - see the
+//   "FORWARDING UNIT" section in that file. The one case forwarding cannot
+//   fix is load-use: a lw's data is not ready until it finishes MEM, one
+//   cycle later than forwarding can reach. That still needs a hazard-detect
+//   + stall unit, which is not built yet (src/program.hex avoids the pattern
+//   for now - see that file's header).
 //=============================================================================
 
 module Decode_Cycle (
@@ -75,7 +87,9 @@ module Decode_Cycle (
     output reg  [31:0] RD2E,         // data: rs2 value
     output reg  [31:0] ImmExtE,      // data: sign-extended immediate
     output reg  [31:0] PCE,          // data: this instruction's own address
-    output reg  [4:0]  RdE           // data: destination register number
+    output reg  [4:0]  RdE,          // data: destination register number
+    output reg  [4:0]  Rs1E,         // data: rs1 register NUMBER (not value)
+    output reg  [4:0]  Rs2E          // data: rs2 register NUMBER (not value)
 );
 
     //-------------------------------------------------------------------------
@@ -245,6 +259,8 @@ module Decode_Cycle (
             ImmExtE     <= 32'h00000000;
             PCE         <= 32'h00000000;
             RdE         <= 5'b00000;
+            Rs1E        <= 5'b00000;
+            Rs2E        <= 5'b00000;
         end
         else begin
             // ---- the control backpack ----
@@ -260,6 +276,8 @@ module Decode_Cycle (
             ImmExtE     <= ImmExtD;
             PCE         <= PCD;
             RdE         <= InstrD[11:7];   // rd field
+            Rs1E        <= InstrD[19:15];  // rs1 field - forwarding compares this
+            Rs2E        <= InstrD[24:20];  // rs2 field - forwarding compares this
         end
     end
 

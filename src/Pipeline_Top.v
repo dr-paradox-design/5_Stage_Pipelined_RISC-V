@@ -41,33 +41,47 @@
 //                                                          [MEM/WB] ---> WB
 //
 //   Forward: five stages, four pipeline registers between them.
-//   Backward: exactly two paths, and they are the source of all the difficulty
-//   in pipelining.
+//   Backward: THREE paths now. Two are architectural necessities (branch
+//   redirect, register write-back); the third is forwarding, which exists
+//   purely to shorten the delay the second one would otherwise cost.
 //
 //     BACKWARD PATH 1 - branch redirect  (EX -> IF)
 //        PCSrcE, PCTargetE
 //        A branch is resolved in EX, but the PC lives in IF. By the time the
 //        answer arrives, IF has already fetched two more instructions.
-//        Consequence: 2 delay-slot NOPs after every taken branch.
+//        Consequence: 2 delay-slot NOPs after every taken branch. STILL
+//        PRESENT - forwarding does nothing for control hazards, only data
+//        hazards. Fixing this needs flush logic, not built yet.
 //
 //     BACKWARD PATH 2 - register write-back  (WB -> ID)
 //        RegWriteW, RdW, ResultW
 //        The register file is read in ID but written from WB, four stages
-//        later, with no write-through bypass.
-//        Consequence: 3 NOPs between a producer and its consumer.
+//        later, with no write-through bypass. Left completely unchanged by
+//        this update - still the mechanism that eventually commits a value.
 //
-//   Both consequences are handled IN SOFTWARE in this build, by scheduling NOPs
-//   in src/program.hex. That is a real historical technique (early MIPS exposed
-//   the branch delay slot in its ISA for exactly this reason), and it keeps the
-//   hardware here honest: no hazard unit is present, and none is pretended.
+//     BACKWARD PATH 3 - forwarding  (WB -> EX, and MEM's own regs -> EX)
+//        RegWriteW, RdW, ResultW ALSO now reach into Execute_Cycle directly
+//        (the same three wires as path 2, just wired to a second
+//        destination), plus Execute_Cycle reads its OWN EX/MEM register's
+//        present value for the nearer hazard - see the FORWARDING UNIT
+//        comment in Execute_Cycle.v. This is what removed the 3-NOP data-
+//        hazard gap: EX no longer has to wait for path 2 to complete, it can
+//        grab the value the moment it exists.
 //
-// WHAT THIS BUILD DELIBERATELY DOES NOT HAVE
-//   - no hazard detection unit
-//   - no forwarding / bypass network
-//   - no stalling (nothing ever holds a pipeline register)
+//   The branch-delay consequence is still handled IN SOFTWARE, by scheduling
+//   2 NOPs in src/program.hex after every taken branch. That is a real
+//   historical technique (early MIPS exposed the branch delay slot in its ISA
+//   for exactly this reason).
+//
+// WHAT THIS BUILD DELIBERATELY DOES NOT HAVE (YET)
+//   - no hazard detection unit / load-use stall logic
 //   - no flushing (nothing ever clears a pipeline register mid-run)
-//   Those are the next project stage. Leaving them out makes the pipeline
-//   registers themselves - the actual subject of this build - easy to see.
+//   Forwarding (EX/MEM and MEM/WB -> EX) IS now present - see
+//   Execute_Cycle.v. It resolves ordinary RAW hazards with zero stall
+//   cycles. The one pattern it cannot resolve is load-use (a lw immediately
+//   followed by a dependent instruction), because the loaded data is not
+//   ready until MEM completes - one cycle later than forwarding can reach.
+//   That needs hazard detection + a stall, the next project stage.
 //=============================================================================
 
 // ---- the five NEW stage files, here in src/ ----
@@ -111,7 +125,7 @@ module Pipeline_Top (
     wire        RegWriteE, ALUSrcE, MemWriteE, ResultSrcE, BranchE;
     wire [2:0]  ALUControlE;
     wire [31:0] RD1E, RD2E, ImmExtE, PCE;
-    wire [4:0]  RdE;
+    wire [4:0]  RdE, Rs1E, Rs2E;   // Rs1E/Rs2E: register NUMBERS, for forwarding
 
     // ---- EX/MEM outputs: what memory sees ----
     wire        RegWriteM, MemWriteM, ResultSrcM;
@@ -169,14 +183,18 @@ module Pipeline_Top (
         .RD2E        (RD2E),
         .ImmExtE     (ImmExtE),
         .PCE         (PCE),
-        .RdE         (RdE)
+        .RdE         (RdE),
+        .Rs1E        (Rs1E),
+        .Rs2E        (Rs2E)
     );
 
     //=========================================================================
     // STAGE 3 - EXECUTE
     //
-    // The only stage that produces a backward bundle for fetch. Everything
-    // else it emits flows forward into MEM.
+    // Produces the branch-redirect bundle for fetch, as before. It now ALSO
+    // consumes RegWriteW/RdW/ResultW - the SAME three wires already wired
+    // into Decode for the write-back path - as its forwarding source from
+    // WB. One producer, two consumers; nothing new needed at the WB end.
     //=========================================================================
     Execute_Cycle Execute (
         .clk         (clk),
@@ -192,6 +210,11 @@ module Pipeline_Top (
         .ImmExtE     (ImmExtE),
         .PCE         (PCE),
         .RdE         (RdE),
+        .Rs1E        (Rs1E),
+        .Rs2E        (Rs2E),
+        .RegWriteW   (RegWriteW),   // <-- forwarding source, from WB
+        .RdW         (RdW),         // <-- forwarding source, from WB
+        .ResultW     (ResultW),     // <-- forwarding source, from WB
         .PCSrcE      (PCSrcE),      // --> backward, to IF
         .PCTargetE   (PCTargetE),   // --> backward, to IF
         .RegWriteM   (RegWriteM),
