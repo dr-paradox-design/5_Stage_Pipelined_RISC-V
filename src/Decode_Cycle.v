@@ -51,14 +51,23 @@
 //   identifiers; RD1E/RD2E ride alongside them as the (possibly stale) values
 //   that forwarding will override if a hazard is detected downstream.
 //
-// WHAT WE ARE STILL NOT DOING (load-use)
-//   Execute_Cycle.v now forwards EX/MEM and MEM/WB results into EX, which
-//   resolves ordinary RAW hazards with zero stall cycles - see the
-//   "FORWARDING UNIT" section in that file. The one case forwarding cannot
-//   fix is load-use: a lw's data is not ready until it finishes MEM, one
-//   cycle later than forwarding can reach. That still needs a hazard-detect
-//   + stall unit, which is not built yet (src/program.hex avoids the pattern
-//   for now - see that file's header).
+// THE DECODE-STAGE WRITE-THROUGH BYPASS  (closes the "distance 3" hole)
+//   See the long comment on the register file below. In short: EX-stage
+//   forwarding reaches producers 1 and 2 instructions back, and a plain
+//   register-file read is safe for producers 4 or more instructions back.
+//   A producer EXACTLY 3 back falls between the two and used to read stale
+//   data. The two-line bypass below fixes it, here in ID, without modifying
+//   the shared/frozen single_core/Register_file.v.
+//
+// HAZARD COVERAGE AFTER THIS FILE, EXECUTE_CYCLE.V AND HAZARD_UNIT.V
+//   distance 1  -> EX/MEM forwarding        (Execute_Cycle.v)   0 cycles
+//   distance 2  -> MEM/WB forwarding        (Execute_Cycle.v)   0 cycles
+//   distance 3  -> decode write-through     (this file)         0 cycles
+//   distance 4+ -> plain register-file read (already committed) 0 cycles
+//   load-use    -> stall 1, then distance 2 (Hazard_Unit.v)     1 cycle
+//   taken branch-> flush IF/ID and ID/EX    (Hazard_Unit.v)     2 cycles
+//   That is every hazard this ISA subset can produce. WAR and WAW cannot
+//   occur in a strictly in-order pipeline - see Hazard_Unit.v for why.
 //=============================================================================
 
 module Decode_Cycle (
@@ -75,6 +84,9 @@ module Decode_Cycle (
     input  wire        RegWriteW,    // does that older instruction write a reg?
     input  wire [4:0]  RdW,          // which register number
     input  wire [31:0] ResultW,      // the value to put in it
+
+    // ---- backward path in, from the hazard unit ---------------------------
+    input  wire        FlushE,       // 1 = clear ID/EX (bubble or wrong path)
 
     // ---- forward path out, into execute (outputs of the ID/EX register) ---
     output reg         RegWriteE,    // control: write a register in WB
@@ -174,13 +186,66 @@ module Decode_Cycle (
     // module has no idea, and needs no idea, which instruction those write
     // signals belong to.
     //
-    // TIMING CONSEQUENCE YOU MUST KNOW ABOUT
-    //   Register_file.v writes on the RISING edge and its reads have no
-    //   write-through bypass. So a value written at edge T is only visible to
-    //   reads that are latched at edge T+1 or later. Combined with the four
-    //   stages between ID and WB, that is why a dependent instruction must sit
-    //   at least 4 slots behind its producer (3 NOPs in between). Worked out
-    //   arithmetically in the src/program.hex header.
+    // THE TIMING PROBLEM THIS MODULE HAS, AND WHY IT IS FIXED OUTSIDE IT
+    //   Register_file.v writes on the RISING edge and its reads have NO
+    //   write-through bypass. A value written at edge T is therefore invisible
+    //   to a read latched at that same edge T - the read sees the pre-edge
+    //   value. (Verilog's non-blocking semantics make this deterministic
+    //   rather than a race: both sides sample old state, then update.)
+    //
+    //   Now count when that collision actually happens. Take a producer p and
+    //   a consumer c = p+3, with no stalls between them:
+    //
+    //       cycle:   T-3   T-2   T-1    T
+    //       p (idx)  EX    MEM   WB
+    //       c=p+3    --    IF    ID    EX
+    //
+    //   The consumer is in ID during cycle T-1, which is EXACTLY the cycle the
+    //   producer spends in WB. The producer's write commits at the edge ending
+    //   T-1; the consumer's ID/EX register latches its operands at that same
+    //   edge. Stale read.
+    //
+    //   And EX-stage forwarding cannot rescue it either: by cycle T, when the
+    //   consumer is in EX, the producer has already LEFT WB. It is not on
+    //   EX/MEM (that is p+1's slot) and not on MEM/WB (that is p+2's). The
+    //   value has fallen off the end of every forwarding path.
+    //
+    //   So distance 3 - and only distance 3 - was a real hole. Distances 1 and
+    //   2 are forwarded in EX; distance 4+ is safely committed and read
+    //   normally.
+    //
+    // THE TEXTBOOK FIX, AND WHY THIS PROJECT DOES IT DIFFERENTLY
+    //   Harris & Harris and Patterson & Hennessy both solve this inside the
+    //   register file: write during the FIRST half of the clock cycle, read
+    //   during the SECOND half, so a same-cycle write-then-read just works.
+    //
+    //   That would mean editing single_core/Register_file.v - a file shared
+    //   verbatim with the single-cycle core, which currently passes its own
+    //   regression. Changing its write timing to fix a pipeline-only problem
+    //   risks breaking a core that does not even have this problem. So the fix
+    //   is applied HERE instead, in a file the pipeline owns outright.
+    //
+    // WHAT THE BYPASS BELOW ACTUALLY DOES
+    //   It reproduces write-first-read-second behaviour in combinational logic
+    //   OUTSIDE the register file: if the value being written from WB this
+    //   cycle is for the very register we are reading this cycle, use the
+    //   write data directly instead of the array output. Same observable
+    //   behaviour as a half-cycle register file, zero changes to shared code.
+    //
+    //   The RdW != 0 guard matters for the same reason it does in the
+    //   forwarding unit: x0 must always read as zero, and rs1/rs2 fields read
+    //   as 0 on instructions that do not use them.
+    //
+    // DOES THIS EVER FIGHT WITH EX-STAGE FORWARDING?
+    //   No - and the priority works out correctly without any coordination
+    //   between them. Suppose two producers write the same register and the
+    //   consumer needs the LATER one. If that later producer is 1 or 2 back,
+    //   Execute_Cycle.v's forwarding muxes override whatever value was latched
+    //   into RD1E/RD2E, so this bypass is simply ignored. If it is 3 back,
+    //   this bypass supplies it and EX forwarding finds no match. If it is 4+
+    //   back, nobody is in WB writing that register while we decode, so the
+    //   plain array read is already right. The three mechanisms partition the
+    //   distance axis cleanly with no overlap and no gap.
     //=========================================================================
     Register_file Register_file (
         .clk (clk),
@@ -190,9 +255,19 @@ module Decode_Cycle (
         .A3  (RdW),             // write address  - from WB, 4 stages ahead
         .WD3 (ResultW),         // write data     - from WB
         .WE3 (RegWriteW),       // write enable   - from WB
-        .RD1 (RD1D),
+        .RD1 (RD1D),            // raw array read - may be one edge stale
         .RD2 (RD2D)
     );
+
+    //-------------------------------------------------------------------------
+    // WRITE-THROUGH BYPASS - see the long explanation directly above.
+    // These, not RD1D/RD2D, are what gets latched into the ID/EX register.
+    //-------------------------------------------------------------------------
+    wire RD1_bypass = RegWriteW && (RdW != 5'b00000) && (RdW == InstrD[19:15]);
+    wire RD2_bypass = RegWriteW && (RdW != 5'b00000) && (RdW == InstrD[24:20]);
+
+    wire [31:0] RD1D_fwd = RD1_bypass ? ResultW : RD1D;
+    wire [31:0] RD2D_fwd = RD2_bypass ? ResultW : RD2D;
 
     //=========================================================================
     // SIGN EXTENDER
@@ -245,9 +320,36 @@ module Decode_Cycle (
     //   would let a garbage write land in the register file or data memory
     //   before the program even starts. Zeroing them makes the reset state a
     //   stream of harmless NOPs draining out of the pipe.
+    //
+    // FlushE CLEARS EXACTLY THE SAME THINGS RESET DOES - AND THAT IS THE POINT
+    //   A "bubble" is not a special kind of instruction with its own encoding.
+    //   It is just an all-zeros control word: RegWriteE=0, MemWriteE=0,
+    //   BranchE=0. Such an entry flows down the pipe occupying a slot, doing
+    //   arithmetic nobody reads, and writing nothing anywhere. Architecturally
+    //   invisible - which is the entire requirement.
+    //
+    //   So the flush clause shares the reset clause's body. Two very different
+    //   REASONS (start-up vs. a hazard) needing the identical ACTION (make
+    //   this pipeline slot inert) is worth noticing rather than treating as a
+    //   coincidence - it is why one `if (!rst || FlushE)` is honest here
+    //   rather than a shortcut.
+    //
+    //   FlushE fires for both of the hazard unit's cases:
+    //     * load-use stall - fills the gap opened when IF/ID is held, so the
+    //       held instruction is not issued into EX twice.
+    //     * taken branch   - kills the wrong-path instruction that already
+    //       made it into decode.
+    //   See Hazard_Unit.v for the derivation of both.
+    //
+    // WHY THERE IS NO "StallE"
+    //   The back half of the pipe (EX, MEM, WB) NEVER stalls in this design.
+    //   When the front freezes, the back keeps draining - that is what makes
+    //   room for the bubble. A stall that froze every stage at once would
+    //   accomplish nothing at all: the pipeline would simply stop, and the
+    //   load whose data we are waiting for would never reach WB.
     //=========================================================================
     always @(posedge clk) begin
-        if (!rst) begin
+        if (!rst || FlushE) begin
             RegWriteE   <= 1'b0;
             ALUSrcE     <= 1'b0;
             MemWriteE   <= 1'b0;
@@ -271,8 +373,11 @@ module Decode_Cycle (
             BranchE     <= BranchD;
             ALUControlE <= ALUControlD;
             // ---- the data ----
-            RD1E        <= RD1D;
-            RD2E        <= RD2D;
+            // RD1D_fwd / RD2D_fwd, not the raw RD1D / RD2D: the write-through
+            // bypass above has already substituted the WB value if this
+            // instruction's producer is exactly 3 slots ahead of it.
+            RD1E        <= RD1D_fwd;
+            RD2E        <= RD2D_fwd;
             ImmExtE     <= ImmExtD;
             PCE         <= PCD;
             RdE         <= InstrD[11:7];   // rd field

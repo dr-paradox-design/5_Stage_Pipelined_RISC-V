@@ -1,176 +1,167 @@
-// RV32I regression program for the 5-STAGE PIPELINED core, WITH FORWARDING.
+// RV32I regression program for the 5-STAGE PIPELINED core.
 // Loaded by instruction_Memory.v via $readmemh; one 32-bit word per line.
 // Expected final register state is asserted in Pipeline_Top_TestBench.v.
 //
 //=============================================================================
-// WHY THIS PROGRAM IS NOT THE SAME FILE AS single_core/program.hex
+// THIS PROGRAM CONTAINS ZERO NOPs. THAT IS THE HEADLINE.
 //
-// It computes exactly the same 12 results, in the same order, into the same
-// registers. That is on purpose: the two cores must reach an IDENTICAL
-// architectural outcome, so the same 12 checks can be used on both.
+// Every earlier version of this file needed hand-inserted NOPs to keep the
+// pipeline correct: 3 to space out data hazards, and 2 more in the branch
+// delay slots. All 5 are gone. Not because the hazards went away, but because
+// each one is now handled by hardware:
 //
-// What differs is the SCHEDULE. This version has EX/MEM and MEM/WB forwarding
-// (see Execute_Cycle.v) and needs ZERO data-hazard NOPs - down from 3 in the
-// pre-forwarding version of this file. The 2 branch-delay-slot NOPs are still
-// here: forwarding only fixes DATA hazards, and the branch-delay problem is a
-// CONTROL hazard - a completely different mechanism, unaffected by this
-// change. Fixing that needs flush logic, which is not built yet.
+//     3 data-hazard NOPs  -> killed by forwarding      (Execute_Cycle.v)
+//                            and the decode bypass     (Decode_Cycle.v)
+//     2 delay-slot NOPs   -> killed by branch flushing (Hazard_Unit.v)
 //
-//-----------------------------------------------------------------------------
-// WHY FORWARDING NEEDS ZERO NOPs FOR MOST OF THIS PROGRAM
-//
-// Execute_Cycle.v's forwarding unit compares the register EX is about to read
-// against the register the instruction in MEM is about to write (RdM) and the
-// register the instruction in WB is about to write (RdW), and grabs the value
-// straight off ALU_ResultM or ResultW if either matches. That covers a
-// producer sitting 1 instruction back (EX/MEM) or 2 instructions back
-// (MEM/WB) - see the FORWARDING UNIT comment in Execute_Cycle.v for exactly
-// how those two cases are told apart, and for the priority rule when both
-// would match.
+// A program that must be scheduled around the CPU's internal timing is not
+// really running on a general-purpose processor - it is running on a trap. The
+// whole point of this stage of the project is that arbitrary RV32I code now
+// executes correctly on this core, and this file is the evidence.
 //
 //-----------------------------------------------------------------------------
-// THE GAP THIS DESIGN DOES *NOT* CLOSE - A PRODUCER EXACTLY 3 SLOTS BACK
+// THIS IS A HAZARD TEST, NOT AN ARITHMETIC TEST
 //
-// Forwarding reaches back 2 stages (EX/MEM, MEM/WB). Reading straight from
-// the register file is only safe once a producer is >=4 slots back (the exact
-// derivation is preserved below, for reference). That leaves a real hole at
-// EXACTLY 3 slots back: too far for either forwarding path, too close for an
-// unassisted register-file read.
+// The 17 computed values below are almost incidental - the instructions were
+// chosen and ORDERED so that each of the five hazard mechanisms has at least
+// one instruction that would produce a visibly WRONG answer if that mechanism
+// were broken or removed. Read the per-line notes as a map of what each line
+// is there to prove. A regression that passes only because the schedule is
+// generous proves nothing; every one of these is deliberately tight.
 //
-// Concretely: Register_file.v writes on the rising edge with no write-through
-// bypass, and Decode_Cycle.v's ID/EX register latches its read with a
-// non-blocking assignment on THAT SAME EDGE when producer p and consumer
-// c=p+3 line up. Verilog's non-blocking-assignment semantics guarantee the
-// read side samples the PRE-edge (stale) value in that exact collision - so a
-// producer 3 slots back is silently wrong, not silently safe.
+//   mechanism                     proven by     breaks as
+//   ----------------------------  ------------  ------------------------------
+//   EX/MEM forwarding (dist 1)    idx2 (rs2)    x3 = 5  instead of 8
+//   MEM/WB forwarding (dist 2)    idx2 (rs1)    x3 = 3  instead of 8
+//   store-data forwarding         idx3          mem[0] = 0, so x9 = 0
+//   load-use stall                idx5          x13 = 1  instead of 9
+//   branch flush (ID/EX slot)     idx14         x11 = 99 instead of 0
+//   branch flush (IF/ID slot)     idx15         x14 = 88 instead of 0
+//   decode bypass (dist 3)        idx19         x17 = 0  instead of 7
 //
-// The textbook fix (Harris & Harris, Patterson & Hennessy) is a register file
-// that WRITES in the first half of the clock cycle and READS in the second
-// half, so a same-cycle write-then-read inside one clock period just works.
-// This project deliberately does NOT do that: Register_file.v is shared with
-// single_core/ and is being kept frozen (see the include-strategy note in
-// Pipeline_Top.v) - changing its write timing risks the single-cycle
-// regression for a benefit that only matters here. So this program is simply
-// SCHEDULED to never place a dependent instruction exactly 3 slots behind its
-// producer. See the per-instruction distance notes below - every one lands on
-// 1, 2 (forwarded) or >=4 (already committed), and none lands on 3.
-//
-//   (When hazard-detection + stalling is built next, a load-use stall makes
-//   this gap irrelevant for lw specifically. A general producer-exactly-3-back
-//   ALU hazard remains a real, documented limitation of this design until the
-//   register file itself is changed - which is why it is called out here
-//   explicitly rather than swept under the schedule.)
-//
-//-----------------------------------------------------------------------------
-// THE ORIGINAL (PRE-FORWARDING) 3-NOP DERIVATION, KEPT FOR REFERENCE
-//
-//   Let each instruction be numbered by its slot index i (0,1,2,...). With one
-//   instruction issued per cycle and a 100 ns clock:
-//
-//     instruction i is in  IF  during  (100i, 100i+100)
-//                          ID  during  (100i+100, 100i+200)
-//                          EX  during  (100i+200, 100i+300)
-//                          MEM during  (100i+300, 100i+400)
-//                          WB  during  (100i+400, 100i+500)
-//
-//   producer p commits (posedge, end of WB):      t = 100p + 600
-//   consumer c samples (posedge, end of ID):      t = 100c + 300
-//
-//   Direct register-file read is safe only if the write lands STRICTLY before
-//   the sample:  100p+600 < 100c+300  =>  c > p+3  =>  c >= p+4.
-//   That is where "3 NOPs" and "distance must be >=4" both come from.
-//
-//-----------------------------------------------------------------------------
-// HAZARD 2 - CONTROL HAZARD: a taken branch still needs 2 delay-slot NOPs
-//
-//   A branch is resolved in EX (PCSrcE = BranchE & ZeroE, see
-//   Execute_Cycle.v). By the time PCSrcE is valid, fetch has already fetched
-//   the two instructions physically following the branch in memory. This
-//   build has no flush logic, so those two instructions WILL execute -
-//   forwarding has nothing to do with this, and does not touch it. The two
-//   slots immediately after a taken branch remain DELAY SLOTS filled with
-//   NOPs. (Real MIPS made this part of its ISA and let compilers fill the
-//   slot with useful work.) A NOT-taken branch needs nothing extra.
-//
-//-----------------------------------------------------------------------------
-// THE NOP ENCODING
-//   0x00000013 is  addi x0, x0, 0  - the canonical RISC-V NOP. It writes to x0,
-//   which is hardwired to zero, so the write is architecturally invisible. It
-//   is a real instruction that flows through all five stages like any other.
+//=============================================================================
+// THE NOP ENCODING, FOR REFERENCE
+//   0x00000013 is  addi x0, x0, 0  - the canonical RISC-V NOP. It no longer
+//   appears anywhere in this program. Note that the hardware still MAKES nops
+//   internally: a flush or a stall injects an all-zeros control word into a
+//   pipeline register, which is the same idea implemented in silicon instead
+//   of in the instruction stream. The bubbles did not disappear - they just
+//   stopped being the programmer's problem.
 //=============================================================================
 //
 // idx  addr   encoding   instruction          | why it is here
 00500093   // 0   0x00   addi x1, x0, 5        | x1 = 5
 00300113   // 1   0x04   addi x2, x0, 3        | x2 = 3
-002081b3   // 2   0x08   add  x3, x1, x2       | x3 = 8. rs1=x1 is 2 back from
-           //                                  |  its producer (idx0) -> MEM/WB
-           //                                  |  forward. rs2=x2 is 1 back
-           //                                  |  from its producer (idx1) ->
-           //                                  |  EX/MEM forward. ZERO NOPs -
-           //                                  |  this line is the proof that
-           //                                  |  both forwarding paths work.
-00302023   // 3   0x0c   sw   x3, 0(x0)        | mem[0] = 8. rs2=x3 is 1 back
-           //                                  |  from its producer (idx2) ->
+002081b3   // 2   0x08   add  x3, x1, x2       | x3 = 8. THE FORWARDING PROOF.
+           //                                  |  rs1=x1 is 2 back  -> MEM/WB
+           //                                  |  rs2=x2 is 1 back  -> EX/MEM
+           //                                  |  One instruction exercising
+           //                                  |  BOTH forwarding paths at once,
+           //                                  |  with different answers if
+           //                                  |  either is wrong: 3 if the
+           //                                  |  MEM/WB path fails (x1 reads
+           //                                  |  0), 5 if the EX/MEM path
+           //                                  |  fails (x2 reads 0).
+00302023   // 3   0x0c   sw   x3, 0(x0)        | mem[0] = 8. rs2=x3 is 1 back ->
            //                                  |  EX/MEM forward INTO THE
            //                                  |  STORE-DATA PATH specifically
            //                                  |  (WriteDataM <= ForwardedRD2E
-           //                                  |  in Execute_Cycle.v). Without
-           //                                  |  that specific fix this line
-           //                                  |  would silently store 0, not
-           //                                  |  8, and the lw check below
-           //                                  |  would fail - this is the
-           //                                  |  line that proves it.
-00002483   // 4   0x10   lw   x9, 0(x0)        | x9 = 8. Memory hazard (not a
-           //                                  |  register hazard): the store
-           //                                  |  commits at the edge ending
-           //                                  |  its MEM cycle, this load
-           //                                  |  reads combinationally during
-           //                                  |  the cycle right after. Works
-           //                                  |  with 0 gap regardless of
-           //                                  |  register forwarding.
-40208233   // 5   0x14   sub  x4, x1, x2       | x4 = 2. x1 is 5 back, x2 is 4
-           //                                  |  back - both already
-           //                                  |  committed to the register
-           //                                  |  file (>=4, no forwarding
-           //                                  |  needed). The sw/lw pair
-           //                                  |  above is what supplies this
-           //                                  |  spacing "for free" - no
-           //                                  |  padding NOPs were needed.
-0020f2b3   // 6   0x18   and  x5, x1, x2       | x5 = 5 & 3 = 1
-0020e333   // 7   0x1c   or   x6, x1, x2       | x6 = 5 | 3 = 7
-001123b3   // 8   0x20   slt  x7, x2, x1       | x7 = (3 < 5) = 1
-0020a433   // 9   0x24   slt  x8, x1, x2       | x8 = (5 < 3) = 0
-00208463   // 10  0x28   beq  x1, x2, +8       | NOT taken (5 != 3). No delay
-           //                                  |  slots needed for a fall-through.
-00100513   // 11  0x2c   addi x10, x0, 1       | x10 = 1 - proves fall-through
-00108863   // 12  0x30   beq  x1, x1, +16      | TAKEN (5 == 5) -> 0x30+16 = 0x40
-00000013   // 13  0x34   nop                   | delay slot 1 - fetched before
-00000013   // 14  0x38   nop                   | delay slot 2 - the branch resolved
-06300593   // 15  0x3c   addi x11, x0, 99      | MUST be skipped -> x11 stays 0
+           //                                  |  in Execute_Cycle.v). Easy fix
+           //                                  |  to forget - it is a separate
+           //                                  |  use of rs2 from the ALU one.
+           //                                  |  Without it this stores 0 and
+           //                                  |  the lw below reads 0 back.
+00002483   // 4   0x10   lw   x9, 0(x0)        | x9 = 8. Not a register hazard:
+           //                                  |  the store commits at the edge
+           //                                  |  ending its MEM cycle and this
+           //                                  |  load reads combinationally in
+           //                                  |  the cycle right after, so no
+           //                                  |  gap is needed.
+00148693   // 5   0x14   addi x13, x9, 1       | x13 = 9. THE LOAD-USE PROOF.
+           //                                  |  rs1=x9 comes from the lw
+           //                                  |  DIRECTLY above. Forwarding
+           //                                  |  cannot fix this one: while
+           //                                  |  this instruction is in EX the
+           //                                  |  lw is still in MEM, and the
+           //                                  |  EX/MEM register holds the
+           //                                  |  load's ADDRESS, not its data.
+           //                                  |  Hazard_Unit.v stalls one
+           //                                  |  cycle so the lw reaches WB and
+           //                                  |  ordinary MEM/WB forwarding
+           //                                  |  takes over. Without the stall
+           //                                  |  x9 forwards as address 0 and
+           //                                  |  x13 becomes 1.
+40208233   // 6   0x18   sub  x4, x1, x2       | x4 = 2. x1/x2 are far back and
+0020f2b3   // 7   0x1c   and  x5, x1, x2       | x5 = 5 & 3 = 1
+0020e333   // 8   0x20   or   x6, x1, x2       | x6 = 5 | 3 = 7
+001123b3   // 9   0x24   slt  x7, x2, x1       | x7 = (3 < 5) = 1
+0020a433   // 10  0x28   slt  x8, x1, x2       | x8 = (5 < 3) = 0
+00208463   // 11  0x2c   beq  x1, x2, +8       | NOT taken (5 != 3). Proves a
+           //                                  |  fall-through does NOT flush -
+           //                                  |  if FlushD/FlushE fired on any
+           //                                  |  branch rather than only a
+           //                                  |  TAKEN one, the addi below
+           //                                  |  would be wrongly killed and
+           //                                  |  x10 would stay 0.
+00100513   // 12  0x30   addi x10, x0, 1       | x10 = 1 - the fall-through
+00108663   // 13  0x34   beq  x1, x1, +12      | TAKEN (5 == 5) -> 0x34+12 = 0x40
+06300593   // 14  0x38   addi x11, x0, 99      | MUST be flushed. When the branch
+           //                                  |  is in EX this one has reached
+           //                                  |  DECODE, so FlushE kills it.
+           //                                  |  x11 must stay 0.
+05800713   // 15  0x3c   addi x14, x0, 88      | MUST be flushed. When the branch
+           //                                  |  is in EX this one is being
+           //                                  |  FETCHED, so FlushD kills it.
+           //                                  |  x14 must stay 0. Two separate
+           //                                  |  registers for the two flush
+           //                                  |  signals, so a failure tells
+           //                                  |  you WHICH one is broken.
 00700613   // 16  0x40   addi x12, x0, 7       | x12 = 7 - the branch target
+00100793   // 17  0x44   addi x15, x0, 1       | x15 = 1  } spacers that put the
+00200813   // 18  0x48   addi x16, x0, 2       | x16 = 2  } add below at dist 3
+000608b3   // 19  0x4c   add  x17, x12, x0     | x17 = 7. THE DECODE-BYPASS
+           //                                  |  PROOF. rs1=x12 is produced by
+           //                                  |  idx16, EXACTLY 3 slots back -
+           //                                  |  the one distance neither
+           //                                  |  forwarding path reaches (too
+           //                                  |  far) nor a plain register-file
+           //                                  |  read handles (too close). When
+           //                                  |  this instruction is in ID,
+           //                                  |  idx16 is in WB writing x12 on
+           //                                  |  the very edge this one latches
+           //                                  |  its operands. The write-through
+           //                                  |  bypass in Decode_Cycle.v
+           //                                  |  catches it. Without it x17
+           //                                  |  reads the stale x12 = 0.
 //
 //-----------------------------------------------------------------------------
-// NOTE ON THE BRANCH OFFSET AT idx 12
-//   Same shape as the pre-forwarding version of this file, just at new
-//   addresses (removing the RAW NOPs shifted everything after them earlier,
-//   but never changed the SPACING between the branch and what it skips):
+// NOTE ON THE BRANCH OFFSET AT idx 13
 //
-//        0x30  beq  (branch)
-//        0x34  nop     <- runs anyway (delay slot)
-//        0x38  nop     <- runs anyway (delay slot)
-//        0x3c  addi x11, x0, 99   <- the one we actually want to skip
-//        0x40  addi x12, x0, 7    <- target:  0x40 - 0x30 = 16
+//   The offset is +12, not the +8 you might expect, and the reason is worth
+//   understanding: a taken branch kills exactly TWO instructions, so a test
+//   that only skips ONE would leave half the flush logic unproven.
 //
-//   Encoding check for 0x00108863 against Sign_Extend.v's B-type unscramble
+//        0x34  beq  x1, x1, +12
+//        0x38  addi x11, x0, 99   <- killed by FlushE (it had reached DECODE)
+//        0x3c  addi x14, x0, 88   <- killed by FlushD (it was being FETCHED)
+//        0x40  addi x12, x0, 7    <- target:  0x40 - 0x34 = 12
+//
+//   With +8 the instruction at 0x3c would be the target itself: it would be
+//   flushed out of IF/ID and then immediately re-fetched from the new PC, so
+//   it would still execute and FlushD's correctness would be invisible. Two
+//   distinct skipped instructions writing two distinct registers means a
+//   failure in either flush path names itself in the regression output.
+//
+//   Encoding check for 0x00108663 against Sign_Extend.v's B-type unscramble
 //   {{19{In[31]}}, In[31], In[7], In[30:25], In[11:8], 1'b0}:
-//     In[31]=0, In[7]=1, In[30:25]=000000, In[11:8]=0000  ->  0_1_000000_0000_0
-//     = 0b10000 = 16.  Correct - identical encoding to before, since the
-//   offset is RELATIVE and the delay-slot shape around it never changed.
+//     In[31]=0, In[7]=0, In[30:25]=000000, In[11:8]=0110  ->  0_0_000000_0110_0
+//     = 0b1100 = 12.  Correct.
+//
 //-----------------------------------------------------------------------------
-// NOTE ON x11
-//   x11 is never written by this program. It reads back as 0 because
-//   Register_file.v clears all 32 registers on reset. If the branch silently
-//   failed to redirect the PC, idx 15 would run and x11 would become 99 -
-//   which is precisely what makes this a real test of branch behaviour rather
-//   than a test that passes by accident.
+// NOTE ON x11 AND x14
+//   Neither is ever written by this program. They read back as 0 because
+//   Register_file.v clears all 32 registers on reset. If the flush logic
+//   silently failed, idx14 and/or idx15 would run and they would become 99 and
+//   88 - which is what makes this a real test of branch behaviour rather than
+//   a test that passes by accident.
 //=============================================================================

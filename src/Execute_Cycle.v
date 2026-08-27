@@ -31,14 +31,20 @@
 //   Both belong to the same instruction, so ANDing them is exactly the single-
 //   cycle equation - just evaluated one stage later.
 //
-// THE COST OF DECIDING THIS LATE  (the "branch delay slot")
+// THE COST OF DECIDING THIS LATE
 //   PCSrcE only becomes valid while the branch sits in EX. By then fetch has
 //   already read the two instructions that physically follow the branch in
-//   memory, and they are sitting in IF/ID and ID/EX. A real pipeline kills them
-//   with flush logic. This build has NO flush logic, so those two instructions
-//   WILL execute. That is not an accident - it is the documented behaviour of
-//   this stage of the project, and src/program.hex puts two NOPs after every
-//   taken branch so that what executes is harmless.
+//   memory, and they are sitting in IF/ID and ID/EX.
+//
+//   PCSrcE therefore has a SECOND consumer besides the PC mux in Fetch: the
+//   Hazard_Unit, which turns it into FlushD and FlushE and wipes both of those
+//   wrong-path instructions out at the same clock edge that redirects the PC.
+//   src/program.hex used to carry two hand-written NOPs after every taken
+//   branch to make them harmless; that workaround is gone.
+//
+//   The two cycles themselves are NOT recovered - the pipe is simply two
+//   instructions emptier for a moment. Flushing buys correctness, not speed.
+//   Recovering the cycles needs branch prediction, which this core lacks.
 //
 // FORWARDING - WHY THIS STAGE, OF ALL OF THEM, NEEDS IT
 //   The ALU here needs rs1/rs2 values that may not have reached the register
@@ -138,6 +144,31 @@ module Execute_Cycle (
     //   operand - e.g. addi's unused rs2 field). Without this guard, two
     //   completely unrelated instructions that both happen to have a zero
     //   field would be treated as a false hazard and forward garbage.
+    //
+    // THE ASSUMPTION THIS UNIT MAKES, AND WHO GUARANTEES IT
+    //   Look at what the 2'b10 case forwards: ALU_ResultM. For an ALU
+    //   instruction that is the answer, and forwarding it is correct. But if
+    //   the instruction sitting in MEM is a LOAD, ALU_ResultM is the ADDRESS
+    //   the load is reading from - the data has not come back from memory yet
+    //   and will not exist until the edge that ends this cycle.
+    //
+    //   Nothing in the code below checks for that. Forwarding an address where
+    //   data was wanted would be a silent, extremely confusing bug - and this
+    //   unit, on its own, would commit it happily.
+    //
+    //   It never gets the chance, because Hazard_Unit.v detects exactly that
+    //   situation one stage earlier (a load in EX with a dependent instruction
+    //   in ID) and stalls for one cycle. By the time the dependent instruction
+    //   reaches EX, the load has moved on to WB, so the match here is against
+    //   RdW and the forwarded value is ResultW - which for a load is the data
+    //   read out of memory, correctly selected by the write-back mux.
+    //
+    //   In other words the 2'b10 path is only ever reachable when the producer
+    //   in MEM is an ALU instruction. That is a real invariant maintained by
+    //   another module, not a property of this code, so it is written down
+    //   here: if the hazard unit is ever removed or its lwStall condition
+    //   weakened, THIS is the line that silently starts producing wrong
+    //   answers.
     //
     // ENCODING
     //   2'b00 = no hazard, use the ID-stage value (RD1E / RD2E)

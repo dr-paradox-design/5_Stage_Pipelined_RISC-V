@@ -5,53 +5,64 @@ single-cycle datapath first, then a 5-stage pipeline (IF → ID → EX → MEM �
 hazard detection, stalling and flushing — with FPGA verification on a PYNQ-Z2 as the end goal.
 
 > **Status:** ✅ Single-cycle core — 12/12 self-checking regression ·
-> ✅ 5-stage pipeline registers (IF/ID, ID/EX, EX/MEM, MEM/WB) — 12/12 regression ·
-> 🚧 Hazard unit, forwarding and flushing next
+> ✅ 5-stage pipeline with **complete hazard handling** — forwarding, load-use stalling and
+> branch flushing — 17/17 regression ·
+> 🚧 FPGA synthesis next
 >
 > Developed and documented openly as I build it, so pipeline features land incrementally.
 
-Both cores run the **same 12 architectural checks** — they differ in schedule, not in what
-the program computes.
+**`src/program.hex` now contains zero NOPs.** Every hazard is resolved in hardware, so
+ordinary RV32I code runs correctly without being hand-scheduled around the pipeline's
+internal timing. The pipelined regression asserts the single-cycle core's **same 12
+architectural results** — the two cores differ in schedule, not in what the program computes —
+plus **5 more that exist only to prove the hazard hardware works.**
 
 | Document | Covers |
 |---|---|
 | [**docs/RV32I_Single_Cycle_Core.pdf**](docs/RV32I_Single_Cycle_Core.pdf) | The single-cycle datapath, control tables, the branch-resolution post-mortem, verification strategy |
-| [**docs/RV32I_Pipeline_Stages.pdf**](docs/RV32I_Pipeline_Stages.pdf) | How `src/` splits that datapath into five stages: the four pipeline registers, the two backward paths, and the derived NOP-scheduling rules |
+| [**docs/RV32I_Pipeline_Stages.pdf**](docs/RV32I_Pipeline_Stages.pdf) | How `src/` splits that datapath into five stages: the four pipeline registers and the backward paths |
 
 ## Architecture
 
 ### 5-stage pipeline (`src/`)
 
 Five stage modules separated by four pipeline registers (the `[[double-bracket]]` blocks).
-Solid arrows flow forward — one instruction advances one stage per clock edge. The two dotted
+Solid arrows flow forward — one instruction advances one stage per clock edge. The dotted
 arrows run **backwards**, and they are where all the difficulty in pipelining comes from:
 
 ```mermaid
 flowchart LR
     IF["<b>1. IF</b><br/>PC, PC+4<br/>instruction memory"]
     R1[["IF/ID"]]
-    ID["<b>2. ID</b><br/>control unit<br/>register file<br/>sign extend"]
+    ID["<b>2. ID</b><br/>control unit<br/>register file<br/>sign extend<br/><i>write-through bypass</i>"]
     R2[["ID/EX"]]
-    EX["<b>3. EX</b><br/>ALU<br/>branch adder<br/>branch decision"]
+    EX["<b>3. EX</b><br/>ALU<br/>branch adder<br/><i>forwarding unit</i>"]
     R3[["EX/MEM"]]
     MEM["<b>4. MEM</b><br/>data memory"]
     R4[["MEM/WB"]]
     WB["<b>5. WB</b><br/>result mux"]
+    HZ{{"<b>Hazard Unit</b><br/>stall + flush"}}
 
     IF --> R1 --> ID --> R2 --> EX --> R3 --> MEM --> R4 --> WB
 
-    EX -. "PCSrcE, PCTargetE<br/>(cost: 2 delay slots)" .-> IF
-    WB -. "RegWriteW, RdW, ResultW<br/>(cost: 3 NOPs)" .-> ID
+    EX -. "PCSrcE, PCTargetE" .-> IF
+    WB -. "RegWriteW, RdW, ResultW" .-> ID
+    MEM -. "RegWriteM, RdM, ALU_ResultM" .-> EX
+    WB -. "ResultW (forward)" .-> EX
+    HZ -. "StallF, StallD, FlushD" .-> IF
+    HZ -. "FlushE" .-> ID
 ```
 
-| Backward path | Why it exists | Cost in this build |
-|---|---|---|
-| `PCSrcE`, `PCTargetE` (EX → IF) | A branch resolves in EX, but the PC lives in IF — two instructions are already fetched by then | 2 delay-slot NOPs after a taken branch |
-| `RegWriteW`, `RdW`, `ResultW` (WB → ID) | The register file is read in ID but written from WB, four stages later, with no write-through bypass | 3 NOPs between dependent instructions |
+| Backward path | Why it exists | Handled by | Cost |
+|---|---|---|---|
+| `RegWriteM`, `RdM`, `ALU_ResultM` (MEM → EX) | The producer is 1 instruction ahead; its result exists but hasn't been committed | EX/MEM forwarding | **0 cycles** |
+| `RegWriteW`, `RdW`, `ResultW` (WB → EX) | The producer is 2 instructions ahead | MEM/WB forwarding | **0 cycles** |
+| `RegWriteW`, `RdW`, `ResultW` (WB → ID) | Producer exactly 3 ahead — writes the register file on the very edge the consumer latches its operands | Decode write-through bypass | **0 cycles** |
+| `StallF`, `StallD`, `FlushE` (Hazard → IF, ID) | A load's data doesn't exist anywhere on-chip until MEM completes — forwarding has nothing to grab | 1-cycle stall, then MEM/WB forwarding | **1 cycle** |
+| `PCSrcE`, `PCTargetE` + `FlushD`, `FlushE` (EX → IF, ID) | A branch resolves in EX; two instructions behind it are already in flight | Flush IF/ID and ID/EX | **2 cycles** |
 
-Both costs are paid **in software** — there is no hazard detection, forwarding, stalling or
-flushing yet. Every NOP in [`src/program.hex`](src/program.hex) is derived from clock
-arithmetic and annotated in place; the derivations are in the pipeline PDF (§9).
+Every cost above is now paid **in hardware**. Nothing is left to the programmer — see
+[`src/program.hex`](src/program.hex), which contains no NOPs at all.
 
 ### Single-cycle datapath (`single_core/`)
 
@@ -108,11 +119,12 @@ flowchart TD
 
 | Module (file) | Role |
 |---|---|
-| `Fetch_Cycle` (`Fetch_Cycle.v`) | Stage 1 — PC, PC+4, instruction memory, PC-source mux, **IF/ID register** |
-| `Decode_Cycle` (`Decode_Cycle.v`) | Stage 2 — control unit, register file, sign extend, **ID/EX register** |
-| `Execute_Cycle` (`Execute_Cycle.v`) | Stage 3 — ALU, branch adder, branch decision, **EX/MEM register** |
+| `Fetch_Cycle` (`Fetch_Cycle.v`) | Stage 1 — PC, PC+4, instruction memory, PC-source mux (with stall hold), **IF/ID register** (with stall + flush) |
+| `Decode_Cycle` (`Decode_Cycle.v`) | Stage 2 — control unit, register file, sign extend, write-through bypass, **ID/EX register** (with flush) |
+| `Execute_Cycle` (`Execute_Cycle.v`) | Stage 3 — ALU, branch adder, branch decision, **forwarding unit**, **EX/MEM register** |
 | `Memory_Cycle` (`Memory_Cycle.v`) | Stage 4 — data memory, **MEM/WB register** |
 | `Writeback_Cycle` (`Writeback_Cycle.v`) | Stage 5 — result mux only; no pipeline register (there is no stage 6) |
+| `Hazard_Unit` (`Hazard_Unit.v`) | **Not a stage** — sits beside the pipeline; load-use detection and branch flush control |
 | `Pipeline_Top` (`Pipeline_Top.v`) | Wiring and includes only — no logic |
 
 Every signal carries a stage suffix (`F` `D` `E` `M` `W`) naming where it lives, so `RD2E`
@@ -139,16 +151,54 @@ means any pipeline failure is provably a pipelining bug.
 | `Data_Memory` (`Data_Mem.v`) | Load/store data memory |
 | `Single_Cycle_Top` (`Single_Cycle_Top.v`) | Datapath integration |
 
+### Hazard handling
+
+The distance between a producer and its consumer decides which mechanism handles it. The three
+zero-cost mechanisms partition that axis cleanly — no overlap, and (now) no gap:
+
+| Producer distance | Mechanism | Where | Cost |
+|---|---|---|---|
+| 1 instruction back | EX/MEM forwarding | `Execute_Cycle.v` | 0 cycles |
+| 2 instructions back | MEM/WB forwarding | `Execute_Cycle.v` | 0 cycles |
+| **3 instructions back** | **Decode write-through bypass** | `Decode_Cycle.v` | 0 cycles |
+| 4+ instructions back | Ordinary register-file read — already committed | — | 0 cycles |
+
+**Distance 3 was a real hole, and closing it is the subtle part.** Forwarding reaches back two
+stages; a plain register-file read is only safe from four back. At exactly three, the producer
+is in WB writing the register file on the *very clock edge* the consumer's ID/EX register
+latches its operands — so the consumer reads the stale value — and by the time the consumer
+reaches EX, the producer has already fallen off the end of both forwarding paths.
+
+The textbook fix is a register file that writes in the first half of the clock cycle and reads
+in the second. That would mean editing `single_core/Register_file.v`, which is shared verbatim
+with the single-cycle core and deliberately frozen. So the same behaviour is reproduced in
+combinational logic in `Decode_Cycle.v` instead — same result, zero changes to shared code.
+
+Two hazards cost real cycles, because no amount of bypassing can create a value that doesn't
+exist yet or un-fetch an instruction that shouldn't have been fetched:
+
+| Hazard | Why forwarding can't fix it | Mechanism | Cost |
+|---|---|---|---|
+| **Load-use** | While the consumer is in EX, the `lw` is still in MEM — the EX/MEM register holds the load's *address*, not its data | Stall 1 cycle, then MEM/WB forwarding applies | 1 cycle |
+| **Taken branch** | `PCSrcE` isn't known until EX; two wrong-path instructions are already in flight | Flush IF/ID and ID/EX | 2 cycles |
+
+`WAR` and `WAW` hazards **cannot occur** here — every instruction reads in ID and writes in WB
+in strict program order, so they're a property of out-of-order machines, not this one.
+Structural hazards are also impossible by construction: instruction and data memory are
+physically separate (a Harvard split), so IF and MEM never contend for a port.
+
 ### Instruction support
 
-Both cores support the same subset, and both regression programs assert the same 12 results:
+Both cores support the same subset. The pipelined regression asserts the single-cycle core's
+12 results, plus 5 more covering hazard hardware the single-cycle core cannot need:
 
 | Type | Instructions | Verified by |
 |---|---|---|
 | R-type | `add` `sub` `and` `or` `slt` | `x3=8`, `x4=2`, `x5=1`, `x6=7`, `x7=1` / `x8=0` |
 | I-type | `addi` `lw` | `x1=5`, `x2=3` / `x9=8` |
 | S-type | `sw` | stores `x3` to `mem[0]`, read back into `x9` |
-| B-type | `beq` | not taken → `x10=1`; taken → `x11` stays `0`, `x12=7` |
+| B-type | `beq` | not taken → `x10=1`; taken → `x11`/`x14` stay `0`, `x12=7` |
+| *hazards* | *(pipeline only)* | `x13=9` load-use stall · `x17=7` distance-3 bypass |
 
 ## Simulation
 
@@ -186,10 +236,15 @@ than relying on a manual waveform read:
 
 ```
 === 5-stage pipelined RV32I regression (src/program.hex) ===
+-- baseline arithmetic (same 12 values as the single-cycle core)
   ok  : x1 = 5
   ...
   ok  : x12 = 7
-RESULT: PASS - all 12 checks passed
+-- hazard hardware (would fail on the pre-hazard-unit build)
+  ok  : x13 = 9
+  ...
+  ok  : x17 = 7
+RESULT: PASS - all 17 checks passed
 ```
 
 `vvp` also prints a `$readmemh: Not enough words in the file for the requested range` warning.
@@ -204,11 +259,11 @@ Programs live in [`src/program.hex`](src/program.hex) and
 require editing or recompiling the RTL. If you change a program, update the `check_reg`
 expectations at the bottom of the matching testbench.
 
-⚠️ **On the pipelined core you must schedule hazards yourself.** With no forwarding or flush
-logic, a dependent instruction needs **3 NOPs** after its producer, and a taken branch needs
-**2 delay-slot NOPs**. The header of [`src/program.hex`](src/program.hex) derives both numbers
-from clock arithmetic; §9 of the pipeline PDF walks through the derivation and confirms it
-experimentally.
+✅ **No hazard scheduling is required.** Both cores now run ordinary RV32I code — dependent
+instructions can sit back to back, `lw` can be followed immediately by a use of its result,
+and branches need no delay slots. If you're comparing against an older revision of this repo,
+note that this is new: `src/program.hex` used to require 3 NOPs between dependent instructions
+and 2 after every taken branch.
 
 ## Repository Structure
 
@@ -231,8 +286,9 @@ experimentally.
     ├── Execute_Cycle.v      # Stage 3 (EX)  + EX/MEM register
     ├── Memory_Cycle.v       # Stage 4 (MEM) + MEM/WB register
     ├── Writeback_Cycle.v    # Stage 5 (WB)  — no register; loops back to ID
+    ├── Hazard_Unit.v        # Stall + flush control (not a stage)
     ├── Pipeline_Top.v       # Wiring and includes only
-    ├── program.hex          # Test program with derived NOP scheduling
+    ├── program.hex          # Test program — zero NOPs; every line probes a hazard path
     └── Pipeline_Top_TestBench.v               # Self-checking testbench
 ```
 
@@ -262,10 +318,41 @@ they're regenerable rather than binary blobs nobody can update.
 - **`PC+4` is deliberately not pipelined.** Textbooks carry it to WB because `jal` writes the
   return address to `rd`. This core has no `jal`, so `PC+4` has exactly one consumer — the PC
   mux in fetch — and never leaves that stage. It goes in the moment `jal` does.
-- **The 3-NOP rule was verified, not just derived.** Rebuilding with only 2 NOPs produced
-  `x3 = 5` instead of `8` — `x1` read correctly while `x2` was still stale, which is precisely
-  the failure the arithmetic predicts. One operand correct and the other stale, in the same
-  instruction, is a signature that doesn't happen by accident.
+- **The 3-NOP rule was verified, not just derived** — back when it still existed. Rebuilding
+  with only 2 NOPs produced `x3 = 5` instead of `8`: `x1` read correctly while `x2` was still
+  stale, exactly the failure the arithmetic predicts. One operand correct and the other stale,
+  in the same instruction, is a signature that doesn't happen by accident. Forwarding has since
+  removed the rule entirely, but the same instruction is still the regression's sharpest probe —
+  see the next note.
+- **Every hazard mechanism is proven load-bearing by negative testing.** A passing regression
+  only proves the hardware isn't broken *today*; it doesn't prove the hardware is doing
+  anything. So each mechanism was disabled in turn and the failure compared against the value
+  predicted in the source comments:
+
+  | Disabled | Result | Predicted |
+  |---|---|---|
+  | EX/MEM forwarding | `x3 = 5` | ✅ `x2` reads stale `0` |
+  | MEM/WB forwarding | `x3 = 3` | ✅ `x1` reads stale `0` |
+  | Store-data forwarding (`WriteDataM <= RD2E`) | `x9 = 0` | ✅ `sw` stores stale `0` |
+  | Load-use stall | `x13 = 1` | ✅ address forwarded instead of data |
+  | Branch flush | `x11 = 99`, `x14 = 88` | ✅ both wrong-path instructions ran |
+  | Decode write-through bypass | `x17 = 0` | ✅ stale `x12` at distance 3 |
+
+  `add x3, x1, x2` is the sharpest single line: its two operands sit at *different* distances
+  (2 and 1), so the two forwarding paths fail to **different wrong answers** — `3` versus `5` —
+  and the regression names which path broke rather than just reporting a mismatch.
+- **`WriteDataM` latches the *forwarded* rs2, not the raw one.** Easy to miss, because rs2 has
+  two separate consumers in EX: the ALU's B operand and the store-data path. Fixing only the
+  first leaves `sw` silently storing a stale value — one of the six failures tabulated above.
+- **The PC is stalled without an enable pin.** `single_core/PC.v` is an unconditional
+  flip-flop and is frozen, so `Fetch_Cycle.v` feeds the PC's own output back into its input
+  instead: `PC <= PCF` is a no-op. An unconditional register plus a feedback mux *is* an
+  enabled register — which is how the enable pin on a real LUT-flop is built underneath.
+- **A bubble is not a special instruction.** Flushing a pipeline register just clears it to
+  all-zeros, which is a control word with `RegWrite = 0` and `MemWrite = 0` — an entry that
+  flows down the pipe doing arithmetic nobody reads and writing nothing anywhere. That's why
+  the flush clause in `Decode_Cycle.v` shares a body with the *reset* clause: two very
+  different reasons, one identical action.
 
 ### Single-cycle (`single_core/`)
 
@@ -287,16 +374,23 @@ they're regenerable rather than binary blobs nobody can update.
 - [x] Branch resolution (zero flag → PC-source mux → branch target)
 - [x] Self-checking regression covering every supported instruction
 - [x] Pipeline registers (IF/ID, ID/EX, EX/MEM, MEM/WB) + self-checking pipeline regression
-- [ ] EX/MEM and MEM/WB forwarding paths
-- [ ] Hazard detection unit + load-use stall logic
-- [ ] Branch flush logic
+- [x] EX/MEM and MEM/WB forwarding paths — removed the 3 data-hazard NOPs
+- [x] Decode write-through bypass — closed the distance-3 gap forwarding can't reach
+- [x] Hazard detection unit + load-use stall logic
+- [x] Branch flush logic — removed the 2 delay-slot NOPs
 - [ ] PYNQ-Z2 FPGA synthesis and on-board verification
+- [ ] *(stretch)* Branch prediction — flushing makes taken branches correct, not cheap
+- [ ] *(stretch)* `jal` / `jalr`, `lb`/`lh`/`sb`/`sh`
 
-The remaining pipeline features have a concrete, falsifiable definition of done: **each one
-deletes NOPs from `src/program.hex` while the same 12 assertions keep passing.** Forwarding
-removes the 3 data-hazard NOPs; flush logic removes the 2 delay slots and returns the branch
-offset to `+8`. Forwarding comes first — it removes the most NOPs for the least logic — then
-the load-use stall, which is the one case forwarding provably can't fix.
+The pipeline features had a concrete, falsifiable definition of done: **each one deletes NOPs
+from `src/program.hex` while the assertions keep passing.** That is now complete — all 5 NOPs
+are gone and the regression grew from 12 checks to 17, because each mechanism added a case that
+*only* passes if that mechanism works. Forwarding came first (most NOPs removed for the least
+logic), then the load-use stall, which is the one data hazard forwarding provably can't fix.
+
+What remains is deliberately *not* correctness work. A taken branch still costs 2 flushed
+cycles and a load-use pair still costs 1 stall; hiding those needs prediction, which is an
+optimisation on top of a core that is already correct.
 
 ## Author
 

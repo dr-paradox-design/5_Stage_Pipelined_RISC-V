@@ -23,12 +23,16 @@
 //   (the IF/ID register at the bottom of this file) and immediately moves on to
 //   fetch the next one. Five instructions end up in flight at once.
 //
-// THE ONE BACKWARDS SIGNAL
+// THE BACKWARDS SIGNALS
 //   PCSrcE / PCTargetE come BACKWARDS from the execute stage. A branch is not
 //   resolved until EX, but the PC lives here in IF. That backward path is what
-//   makes branches expensive in a pipeline, and it is the reason this core
-//   currently needs manually-inserted NOPs after a taken branch (see the
-//   comment on PCNextF below, and src/program.hex).
+//   makes branches expensive in a pipeline.
+//
+//   StallF / StallD / FlushD come backwards from the Hazard_Unit. They are the
+//   reason this stage no longer just marches forward unconditionally: it can
+//   now be told to FREEZE (a load-use stall downstream) or to THROW AWAY what
+//   it just fetched (a taken branch). Read Hazard_Unit.v for why each one
+//   exists; this file only implements them.
 //=============================================================================
 
 module Fetch_Cycle (
@@ -38,6 +42,11 @@ module Fetch_Cycle (
     // ---- backward path from the execute stage -----------------------------
     input  wire        PCSrcE,     // 1 = a branch in EX resolved as TAKEN
     input  wire [31:0] PCTargetE,  // where that taken branch wants to go
+
+    // ---- backward path from the hazard unit -------------------------------
+    input  wire        StallF,     // 1 = hold the PC, do not advance
+    input  wire        StallD,     // 1 = hold the IF/ID register
+    input  wire        FlushD,     // 1 = clear the IF/ID register
 
     // ---- forward path into the decode stage (outputs of the IF/ID reg) ----
     output reg  [31:0] InstrD,     // the fetched instruction word
@@ -53,20 +62,40 @@ module Fetch_Cycle (
     wire [31:0] InstrF;     // instruction read out of memory this cycle
 
     //-------------------------------------------------------------------------
-    // PC-SOURCE MUX
+    // PC-SOURCE MUX  (now three-way: hold / branch / sequential)
     //
-    // Identical in spirit to the mux in Single_Cycle_Top.v, but note WHERE the
-    // select signal comes from: PCSrcE, with an E suffix, meaning it is
-    // produced two stages downstream. By the time a branch sitting in EX
-    // asserts PCSrcE, this stage has ALREADY fetched the two instructions that
-    // sat immediately after the branch in memory. Without flush logic (which we
-    // are deliberately not building yet) those two instructions will run.
+    // The inner mux is identical in spirit to Single_Cycle_Top.v's: PCSrcE
+    // chooses between the branch target and PC+4. Note WHERE that select comes
+    // from - an E suffix, meaning it is produced two stages downstream. By the
+    // time a branch in EX asserts PCSrcE, this stage has already fetched the
+    // two instructions sitting behind it in memory. Those two are now KILLED
+    // by FlushD (here) and FlushE (in Decode_Cycle.v), so they never commit -
+    // which is what retired the two hand-written NOPs src/program.hex used to
+    // need after every taken branch.
     //
-    // That is not a bug in this file - it is the defining behaviour of an
-    // unprotected pipeline, and src/program.hex works around it by placing two
-    // NOPs after every taken branch.
+    // HOW THE PC IS STALLED WITHOUT AN ENABLE PIN
+    //   PC_Module (single_core/PC.v) is a plain unconditional flip-flop: every
+    //   rising edge it does PC <= PC_NEXT. There is no enable input, and that
+    //   file is frozen and shared with the single-cycle core, so adding one is
+    //   off the table.
+    //
+    //   No enable is needed. Feeding the PC's own current value back into its
+    //   input makes the next edge a no-op: PC <= PCF leaves PC exactly where it
+    //   was. A hold is just a self-assignment. This is a genuinely useful trick
+    //   - an unconditional register plus a feedback mux IS an enabled register,
+    //   and on an FPGA it synthesises to the same thing, because the enable pin
+    //   on a real LUT-flop is built exactly this way underneath.
+    //
+    // WHY StallF SITS OUTSIDE PCSrcE
+    //   Priority: freeze beats redirect. The two cannot actually occur together
+    //   (see Hazard_Unit.v - both describe the same EX-stage instruction, which
+    //   cannot be both a load and a taken branch), so this ordering is
+    //   defensive rather than load-bearing. It mirrors Harris & Harris, where
+    //   the PC's enable is ~StallF and the branch mux feeds its D input.
     //-------------------------------------------------------------------------
-    assign PCNextF = PCSrcE ? PCTargetE : PCPlus4F;
+    assign PCNextF = StallF ? PCF :
+                     PCSrcE ? PCTargetE :
+                              PCPlus4F;
 
     //-------------------------------------------------------------------------
     // Reused, unmodified, from single_core/. The pipeline does not need
@@ -120,11 +149,38 @@ module Fetch_Cycle (
     //   together, which is what real flip-flops do. With =, the result would
     //   depend on the order Verilog happened to evaluate the blocks, and data
     //   could race through two stages in one cycle.
+    //
+    // THE THREE-WAY PRIORITY: RESET, THEN FLUSH, THEN STALL, THEN LATCH
+    //   reset  - highest, obviously.
+    //   FlushD - a taken branch means the instruction currently in this
+    //            register is on the wrong path. Overwrite it with 32'h0, which
+    //            decodes to a NOP (opcode 7'b0000000 matches no case in
+    //            main_decoder, so neither RegWrite nor MemWrite asserts).
+    //            Clearing PCD too is not strictly required - nothing reads the
+    //            PC of a NOP - but leaving a stale address behind makes
+    //            waveforms lie about which instruction is where, so it is
+    //            cleared for debuggability.
+    //   StallD - hold: do nothing at all this edge. The instruction already in
+    //            IF/ID stays put and gets decoded a second time. This is the
+    //            ONLY branch of this block that writes nothing, and that
+    //            "writes nothing" is precisely what a stall IS in hardware.
+    //   else   - the normal case: advance.
+    //
+    //   Flush is checked before stall purely defensively - see Hazard_Unit.v
+    //   for why the two can never actually be asserted in the same cycle.
     //=========================================================================
     always @(posedge clk) begin
         if (!rst) begin
             InstrD <= 32'h00000000;
             PCD    <= 32'h00000000;
+        end
+        else if (FlushD) begin
+            InstrD <= 32'h00000000;   // wrong-path instruction -> NOP
+            PCD    <= 32'h00000000;
+        end
+        else if (StallD) begin
+            InstrD <= InstrD;         // hold - re-decode the same instruction
+            PCD    <= PCD;
         end
         else begin
             InstrD <= InstrF;   // instruction moves IF -> ID

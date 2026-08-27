@@ -32,13 +32,23 @@
 //   Register_file.v.
 //
 // THE ONE HAZARD FACT TO REMEMBER
-//   That write lands FOUR stages after the instruction was decoded, and the
-//   register file has no read/write bypass. So an instruction that reads this
-//   register must be latched into ID/EX at a later edge than the write. Do the
-//   counting and you get: the consumer must be at least 4 instruction slots
-//   behind the producer - 3 NOPs in between. With forwarding hardware (a later
-//   project stage) that gap collapses to zero, because the value would be
-//   grabbed from these very wires instead of waiting for the register file.
+//   That write lands FOUR stages after the instruction was decoded, and
+//   Register_file.v has no read/write bypass of its own. Left alone, that
+//   would mean a consumer had to sit at least 4 instruction slots behind its
+//   producer to read the right value.
+//
+//   It no longer does, and ResultW - the wire this file produces - is the
+//   reason. It now has THREE customers, not one:
+//     1. the register file's WD3 port in Decode_Cycle.v (the actual commit),
+//     2. Execute_Cycle.v's MEM/WB forwarding mux, which grabs it for a
+//        consumer 2 slots back,
+//     3. Decode_Cycle.v's write-through bypass, which grabs it for a consumer
+//        exactly 3 slots back.
+//   Together with EX/MEM forwarding for a consumer 1 slot back, every
+//   producer-consumer distance is now covered at zero cost. So this stage's
+//   output is not merely "the value that will eventually be committed" - for
+//   two of its three consumers it is "the value that is needed RIGHT NOW,
+//   several cycles before the register file could have supplied it".
 //=============================================================================
 
 module Writeback_Cycle (

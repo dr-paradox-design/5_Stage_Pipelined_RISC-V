@@ -41,47 +41,60 @@
 //                                                          [MEM/WB] ---> WB
 //
 //   Forward: five stages, four pipeline registers between them.
-//   Backward: THREE paths now. Two are architectural necessities (branch
-//   redirect, register write-back); the third is forwarding, which exists
-//   purely to shorten the delay the second one would otherwise cost.
+//   Backward: FOUR paths now.
 //
 //     BACKWARD PATH 1 - branch redirect  (EX -> IF)
 //        PCSrcE, PCTargetE
 //        A branch is resolved in EX, but the PC lives in IF. By the time the
-//        answer arrives, IF has already fetched two more instructions.
-//        Consequence: 2 delay-slot NOPs after every taken branch. STILL
-//        PRESENT - forwarding does nothing for control hazards, only data
-//        hazards. Fixing this needs flush logic, not built yet.
+//        answer arrives, IF has already fetched two more instructions. Those
+//        two are now KILLED by the hazard unit's FlushD/FlushE rather than
+//        being tolerated - see path 4. A taken branch still costs 2 cycles of
+//        empty pipeline, but it no longer costs the PROGRAMMER anything.
 //
 //     BACKWARD PATH 2 - register write-back  (WB -> ID)
 //        RegWriteW, RdW, ResultW
 //        The register file is read in ID but written from WB, four stages
-//        later, with no write-through bypass. Left completely unchanged by
-//        this update - still the mechanism that eventually commits a value.
+//        later. Still the mechanism that eventually commits every value.
+//        Decode_Cycle.v now also bypasses these same three wires straight
+//        into the ID/EX register when the producer is exactly 3 slots ahead -
+//        the case neither the register file nor forwarding could cover.
 //
 //     BACKWARD PATH 3 - forwarding  (WB -> EX, and MEM's own regs -> EX)
-//        RegWriteW, RdW, ResultW ALSO now reach into Execute_Cycle directly
-//        (the same three wires as path 2, just wired to a second
-//        destination), plus Execute_Cycle reads its OWN EX/MEM register's
-//        present value for the nearer hazard - see the FORWARDING UNIT
-//        comment in Execute_Cycle.v. This is what removed the 3-NOP data-
-//        hazard gap: EX no longer has to wait for path 2 to complete, it can
-//        grab the value the moment it exists.
+//        RegWriteW, RdW, ResultW ALSO reach into Execute_Cycle directly (the
+//        same three wires as path 2, wired to a second destination), plus
+//        Execute_Cycle reads its OWN EX/MEM register's present value for the
+//        nearer hazard - see the FORWARDING UNIT comment in Execute_Cycle.v.
+//        Resolves producers 1 and 2 instructions back at zero cost.
 //
-//   The branch-delay consequence is still handled IN SOFTWARE, by scheduling
-//   2 NOPs in src/program.hex after every taken branch. That is a real
-//   historical technique (early MIPS exposed the branch delay slot in its ISA
-//   for exactly this reason).
+//     BACKWARD PATH 4 - stall and flush control  (Hazard_Unit -> IF, ID)
+//        StallF, StallD, FlushD, FlushE
+//        The only path that can make the pipeline do LESS work rather than
+//        more. Handles the two things forwarding physically cannot: a load
+//        whose data does not exist yet (stall one cycle), and instructions
+//        fetched down a path a branch turned out not to take (throw away).
+//        See Hazard_Unit.v.
 //
-// WHAT THIS BUILD DELIBERATELY DOES NOT HAVE (YET)
-//   - no hazard detection unit / load-use stall logic
-//   - no flushing (nothing ever clears a pipeline register mid-run)
-//   Forwarding (EX/MEM and MEM/WB -> EX) IS now present - see
-//   Execute_Cycle.v. It resolves ordinary RAW hazards with zero stall
-//   cycles. The one pattern it cannot resolve is load-use (a lw immediately
-//   followed by a dependent instruction), because the loaded data is not
-//   ready until MEM completes - one cycle later than forwarding can reach.
-//   That needs hazard detection + a stall, the next project stage.
+// WHAT THIS BUILD NOW HANDLES - COMPLETE HAZARD COVERAGE
+//   RAW distance 1   -> EX/MEM forwarding                     0 cycles
+//   RAW distance 2   -> MEM/WB forwarding                     0 cycles
+//   RAW distance 3   -> decode write-through bypass           0 cycles
+//   RAW distance 4+  -> ordinary register-file read           0 cycles
+//   load-use         -> 1-cycle stall, then MEM/WB forwarding 1 cycle
+//   taken branch     -> flush IF/ID and ID/EX                 2 cycles
+//   WAR / WAW        -> impossible in an in-order pipeline (see Hazard_Unit.v)
+//   structural       -> impossible, instruction and data memory are separate
+//
+//   src/program.hex therefore needs NO hand-scheduled NOPs of any kind. Every
+//   hazard in this ISA subset is now handled in hardware. That is the
+//   difference between a pipeline that works and a pipeline that works only
+//   for programs written carefully enough not to break it.
+//
+// WHAT THIS BUILD STILL DOES NOT HAVE
+//   - no branch prediction. A taken branch is resolved in EX and always costs
+//     2 flushed cycles. Prediction would hide that; flushing only makes it
+//     correct, not cheap.
+//   - no exceptions, interrupts, or CSRs.
+//   - no multiply/divide, no jal/jalr, no lb/lh/sb/sh.
 //=============================================================================
 
 // ---- the five NEW stage files, here in src/ ----
@@ -90,6 +103,7 @@
 `include "Execute_Cycle.v"
 `include "Memory_Cycle.v"
 `include "Writeback_Cycle.v"
+`include "Hazard_Unit.v"      // not a stage - the stall/flush controller
 
 // ---- the eight SHARED functional units, reused verbatim from single_core/ ----
 // Found via  iverilog -I ../single_core  (see the note above). Not one line of
@@ -137,10 +151,16 @@ module Pipeline_Top (
     wire [31:0] ALU_ResultW, ReadDataW;
     wire [4:0]  RdW;
 
-    // ---- the two backward paths ----
+    // ---- the backward paths ----
     wire        PCSrcE;      // EX -> IF : redirect the PC
     wire [31:0] PCTargetE;   // EX -> IF : redirect target
     wire [31:0] ResultW;     // WB -> ID : value to write into the register file
+
+    // ---- hazard-unit control (see Hazard_Unit.v) ----
+    wire        StallF;      // Hazard -> IF : hold the PC
+    wire        StallD;      // Hazard -> IF : hold the IF/ID register
+    wire        FlushD;      // Hazard -> IF : clear the IF/ID register
+    wire        FlushE;      // Hazard -> ID : clear the ID/EX register
 
     //=========================================================================
     // STAGE 1 - INSTRUCTION FETCH
@@ -154,6 +174,9 @@ module Pipeline_Top (
         .rst       (rst),
         .PCSrcE    (PCSrcE),        // <-- backward, from EX
         .PCTargetE (PCTargetE),     // <-- backward, from EX
+        .StallF    (StallF),        // <-- backward, from the hazard unit
+        .StallD    (StallD),        // <-- backward, from the hazard unit
+        .FlushD    (FlushD),        // <-- backward, from the hazard unit
         .InstrD    (InstrD),
         .PCD       (PCD)
     );
@@ -173,6 +196,7 @@ module Pipeline_Top (
         .RegWriteW   (RegWriteW),   // <-- backward, from WB
         .RdW         (RdW),         // <-- backward, from WB
         .ResultW     (ResultW),     // <-- backward, from WB
+        .FlushE      (FlushE),      // <-- backward, from the hazard unit
         .RegWriteE   (RegWriteE),
         .ALUSrcE     (ALUSrcE),
         .MemWriteE   (MemWriteE),
@@ -260,6 +284,51 @@ module Pipeline_Top (
         .ALU_ResultW (ALU_ResultW),
         .ReadDataW   (ReadDataW),
         .ResultW     (ResultW)      // --> backward, to the register file in ID
+    );
+
+    //=========================================================================
+    // HAZARD UNIT  -  not a pipeline stage
+    //
+    // This is the one block in the design that sits BESIDE the pipeline rather
+    // than inside it. It holds no data and adds no latency; it only watches
+    // signals that already exist and decides whether the front of the pipe
+    // should freeze or discard work. See Hazard_Unit.v for the full derivation
+    // of both conditions.
+    //
+    // WHY Rs1D/Rs2D ARE SLICED OUT OF InstrD HERE RATHER THAN PORTED OUT OF
+    // DECODE
+    //   The hazard unit needs the register numbers of the instruction being
+    //   DECODED right now - one stage earlier than the Rs1E/Rs2E that
+    //   Execute_Cycle's forwarding unit uses. InstrD is already a top-level
+    //   wire (it is the IF/ID register's output, driven by Fetch and consumed
+    //   by Decode), so those fields are available here for free. Adding
+    //   Rs1D/Rs2D output ports to Decode_Cycle would create two more wires
+    //   carrying bits this module can already see - pure redundancy.
+    //
+    //   The field positions are fixed by the RV32I encoding and identical for
+    //   every instruction format that has them: rs1 = [19:15], rs2 = [24:20].
+    //   That regularity is deliberate in the ISA, precisely so hardware can
+    //   read register numbers before it knows what the instruction is.
+    //
+    // WHY THIS CANNOT CREATE A COMBINATIONAL LOOP
+    //   Every input here is a pipeline-register OUTPUT (InstrD from IF/ID,
+    //   RdE/ResultSrcE from ID/EX) or derived from one (PCSrcE, from ID/EX
+    //   contents through the ALU). Every output feeds only the CONTROL side of
+    //   a pipeline register - an enable or a clear, never a data path that
+    //   loops back into this unit's own inputs within the same cycle. The
+    //   logic is a pure feed-forward cone from registered state to register
+    //   controls, which is exactly what a hazard unit is supposed to be.
+    //=========================================================================
+    Hazard_Unit Hazard_Unit (
+        .Rs1D       (InstrD[19:15]),  // rs1 of the instruction now in DECODE
+        .Rs2D       (InstrD[24:20]),  // rs2 of the instruction now in DECODE
+        .RdE        (RdE),            // destination of the instruction in EX
+        .ResultSrcE (ResultSrcE),     // ...and whether that one is a LOAD
+        .PCSrcE     (PCSrcE),         // ...or a TAKEN BRANCH
+        .StallF     (StallF),
+        .StallD     (StallD),
+        .FlushD     (FlushD),
+        .FlushE     (FlushE)
     );
 
 endmodule
