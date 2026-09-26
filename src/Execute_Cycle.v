@@ -21,15 +21,22 @@
 //
 // THE BRANCH DECISION - THE OTHER HALF OF A SPLIT AND GATE
 //   Decode_Cycle.v produced BranchE = "this instruction is a branch opcode",
-//   deliberately WITHOUT the condition test (read the .zero(1'b1) comment in
-//   that file - it explains why). The missing half is completed here:
+//   deliberately WITHOUT the condition test, because the ALU flags the test
+//   needs do not exist until this stage. The missing half is completed here:
 //
-//        PCSrcE = BranchE & ZeroE
+//        PCSrcE = BranchE & BranchTakenE
 //
-//   ZeroE is the ALU's zero flag from THIS cycle, testing rs1 - rs2 == 0.
-//   BranchE is a control bit that has travelled one pipeline register from ID.
-//   Both belong to the same instruction, so ANDing them is exactly the single-
-//   cycle equation - just evaluated one stage later.
+//   BranchE is a control bit that travelled one pipeline register from ID.
+//   BranchTakenE is produced RIGHT NOW by Branch_Condition, which reads funct3E
+//   (also piped down from ID) and the ALU's four condition flags to evaluate
+//   whichever of the six comparisons this branch actually asked for. Both terms
+//   describe the same instruction, so ANDing them is exactly the single-cycle
+//   equation - just evaluated one stage later.
+//
+//   This is where all six RV32I branches live: beq, bne, blt, bge, bltu, bgeu.
+//   Until Branch_Condition existed, the right-hand term was the bare ZeroE flag
+//   and the core could only really do beq - the other five decoded as branches
+//   but silently behaved like beq.
 //
 // THE COST OF DECIDING THIS LATE
 //   PCSrcE only becomes valid while the branch sits in EX. By then fetch has
@@ -72,6 +79,7 @@ module Execute_Cycle (
     input  wire        MemWriteE,
     input  wire        ResultSrcE,
     input  wire        BranchE,      // raw branch-opcode bit (NOT "taken")
+    input  wire [2:0]  funct3E,      // WHICH branch comparison: beq/bne/blt/...
     input  wire [2:0]  ALUControlE,
     input  wire [31:0] RD1E,
     input  wire [31:0] RD2E,
@@ -110,7 +118,8 @@ module Execute_Cycle (
     wire [31:0] SrcBE;        // second ALU operand after the ALUSrc mux
     wire [31:0] ALU_ResultE;
     wire        ZeroE;        // ALU flag: result was all zeros
-    wire        NE, CE, VE;   // negative / carry / overflow - unused, see below
+    wire        NE, CE, VE;   // negative / carry / overflow - ALL now consumed
+    wire        BranchTakenE; // Branch_Condition's verdict on funct3E + flags
 
     //=========================================================================
     // FORWARDING UNIT
@@ -232,17 +241,59 @@ module Execute_Cycle (
     //-------------------------------------------------------------------------
     assign SrcBE = ALUSrcE ? ImmExtE : ForwardedRD2E;
 
-    //-------------------------------------------------------------------------
-    // BRANCH DECISION
+    //=========================================================================
+    // BRANCH DECISION  -  all six RV32I conditional branches
     //
-    // For beq the ALU is told to SUBTRACT, so ZeroE is high exactly when
-    // rs1 == rs2. BranchE gates that so a non-branch instruction which happens
-    // to produce a zero result (say  sub x4, x1, x1 ) cannot hijack the PC.
+    // This used to be  `PCSrcE = BranchE & ZeroE`, which implemented exactly
+    // one instruction: beq. Because the old decoder never looked at funct3,
+    // bne/blt/bge/bltu/bgeu were decoded as branches, subtracted like beq, and
+    // then tested against the zero flag - so all five of them executed AS beq.
+    // bne, in particular, branched when its operands were EQUAL: the precise
+    // opposite of what it means. Silent, and the nastiest kind of wrong.
     //
-    // Both terms describe the SAME instruction: BranchE came down the pipe with
-    // it, ZeroE is being produced for it right now.
-    //-------------------------------------------------------------------------
-    assign PCSrcE = BranchE & ZeroE;
+    // The fix is to keep the same two-term structure but upgrade the right-hand
+    // term from one flag to a funct3-selected function of all four flags:
+    //
+    //     BranchE      "this instruction is a B-type branch"   - from ID
+    //     BranchTakenE "the comparison funct3E names is TRUE"  - computed now
+    //
+    // BranchE remains essential as a gate. Every instruction sets flags, so an
+    // ordinary `sub x4, x1, x1` produces Z=1 and would otherwise look exactly
+    // like a satisfied beq and hijack the PC.
+    //
+    // WHY THIS COST NO NEW ARITHMETIC
+    //   The ALU has always computed N, C and V alongside Z; this file used to
+    //   declare them and leave them dangling (the old comment here literally
+    //   said "nothing in this core consumes them"). A subtractor that sets
+    //   flags is already a complete comparator - signed, unsigned, and equality
+    //   all fall out of the same subtraction. Going from one branch instruction
+    //   to six therefore added a 6-way mux and not one gate of datapath. See
+    //   Branch_Condition.v for the derivation, especially why signed less-than
+    //   is N^V rather than N alone.
+    //
+    // STILL THE SAME STAGE, STILL THE SAME 2-CYCLE PENALTY
+    //   The decision is made in EX exactly as before, so the flush machinery
+    //   downstream of PCSrcE is untouched and a taken branch still costs two
+    //   flushed cycles. The core now branches on more CONDITIONS, not sooner.
+    //
+    // WHY funct3E HAD TO BE PIPELINED TO GET HERE
+    //   funct3 is an instruction field, and the instruction word itself is long
+    //   gone - InstrD was consumed in ID and never travels past the ID/EX
+    //   register (see the comment on that register in Decode_Cycle.v). Any
+    //   instruction bits a later stage needs must be carried explicitly. The
+    //   branch condition is the first thing in this core to need a raw ISA
+    //   field this far down the pipe.
+    //=========================================================================
+    Branch_Condition Branch_Condition (
+        .funct3      (funct3E),
+        .Z           (ZeroE),
+        .N           (NE),
+        .C           (CE),
+        .V           (VE),
+        .BranchTaken (BranchTakenE)
+    );
+
+    assign PCSrcE = BranchE & BranchTakenE;
 
     //-------------------------------------------------------------------------
     // BRANCH TARGET ADDER
@@ -264,11 +315,12 @@ module Execute_Cycle (
     //-------------------------------------------------------------------------
     // ALU
     //
-    // Reused unmodified from single_core/. N, C and V are brought out because
-    // the module has those ports, but nothing in this core consumes them - only
-    // Z matters, and only for beq. They are left unconnected-but-named rather
-    // than blank so that a waveform dump still shows them, which is handy when
-    // debugging an arithmetic instruction.
+    // Reused unmodified from single_core/. ALL FOUR condition flags are now
+    // consumed: Z, N, C and V all feed Branch_Condition above. They used to be
+    // brought out only so a waveform dump would show them, with a comment
+    // explaining that nothing read them. Widening the branch set is what
+    // finally gave three of them a job - without changing a line of ALU.v,
+    // because the flags were correct all along and merely unused.
     //
     // .A is SrcAE, NOT the raw RD1E - this is the forwarding mux's only
     // customer for operand A. Every instruction's rs1, including a branch's,
@@ -291,6 +343,12 @@ module Execute_Cycle (
     // WHAT SURVIVES THIS BOUNDARY AND WHAT DIES HERE
     //   Dies:  ALUSrcE      - the mux it controlled already ran, above.
     //          BranchE      - already consumed by the PCSrcE AND gate.
+    //          funct3E      - Branch_Condition was its only downstream reader,
+    //                         and it just ran. (If this core ever gains lb/lh/
+    //                         sb/sh, funct3 would suddenly need to survive to
+    //                         MEM as well, since it is what distinguishes the
+    //                         access widths. It goes in the ID/EX register the
+    //                         day those instructions do.)
     //          ALUControlE  - the ALU already ran.
     //          ImmExtE      - both of its consumers (SrcB mux, branch adder)
     //                         were in this stage.

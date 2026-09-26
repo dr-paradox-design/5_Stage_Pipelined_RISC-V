@@ -36,7 +36,26 @@ module ALU(A,B,ALUControl,Result,Z,N,C,V);
     //addition&subtraction operation then concatination(combine multiple bit or signal into one larger signal using curly braces) of the carry out and sum to get the final result 
     assign {Cout, sum} = A + mux1 + ALUControl[0];
 
-    assign slt = {31'b0, sum[31]}; //if sum is negative then slt=1 else slt=0
+    //SET-LESS-THAN (signed).
+    //
+    //FIX: this was  {31'b0, sum[31]}  - the raw sign bit of A-B, with no
+    //overflow correction. That is right for most operands and WRONG for exactly
+    //the ones where the subtraction overflows the signed range, because then
+    //the sign bit is the opposite of the true comparison. Example:
+    //    A = 0x80000000 (-2147483648), B = 1
+    //    A - B overflows and computes 0x7FFFFFFF, whose sign bit is 0,
+    //    so the old code answered "not less" when A really is less.
+    //
+    //XORing in V repairs it: V is set exactly when the subtraction overflowed,
+    //which is exactly when the sign bit lies. This is the same N^V expression
+    //Branch_Condition.v uses for blt, and it must be - slt and blt ask the
+    //identical question and are required to give identical answers. Before this
+    //fix a program could see  slt x5,a,b  return 0 while  blt a,b,L  was taken,
+    //on the same operands, in the same core.
+    //
+    //Note V is declared further down the file. Order does not matter for
+    //continuous assignments - they are wires, not statements.
+    assign slt = {31'b0, sum[31] ^ V};
 
     //designing 4by1 mux
     assign mux_2 = (ALUControl[2:0] == 3'b000) ? sum : 

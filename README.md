@@ -378,7 +378,7 @@ they're regenerable rather than binary blobs nobody can update.
 - [x] Decode write-through bypass — closed the distance-3 gap forwarding can't reach
 - [x] Hazard detection unit + load-use stall logic
 - [x] Branch flush logic — removed the 2 delay-slot NOPs
-- [ ] PYNQ-Z2 FPGA synthesis and on-board verification
+- [ ] PYNQ-Z2 FPGA synthesis and on-board verificationnow 
 - [ ] *(stretch)* Branch prediction — flushing makes taken branches correct, not cheap
 - [ ] *(stretch)* `jal` / `jalr`, `lb`/`lh`/`sb`/`sh`
 

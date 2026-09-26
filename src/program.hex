@@ -134,6 +134,283 @@
            //                                  |  catches it. Without it x17
            //                                  |  reads the stale x12 = 0.
 //
+//=============================================================================
+// PART 2 - THE OTHER FIVE BRANCHES  (idx 20..38)
+//
+// Everything above tests the PIPELINE. Everything below tests the ISA: the
+// five conditional branches that this core, until now, got silently WRONG.
+//
+// THE BUG THIS SECTION EXISTS TO CATCH
+//   main_decoder.v never looked at funct3, and the branch decision was the
+//   single expression  PCSrc = branch & zero. All six B-type branches share
+//   opcode 1100011 and are told apart ONLY by funct3, so all six were decoded
+//   identically and all six were tested with the zero flag. Every one of them
+//   executed as beq.
+//
+//   That is not a missing feature, it is a WRONG ANSWER. `bne x1, x2, L`
+//   assembled fine, ran fine, and branched when x1 EQUALLED x2 - the exact
+//   opposite of what it means. No exception, no warning. The tests below are
+//   written so that the old hardware fails every single one of them.
+//
+// HOW EACH TEST IS BUILT
+//   Every test is a branch followed by a "poison" instruction that writes a
+//   distinctive non-zero value into an otherwise-untouched register. If the
+//   branch goes the right way the poison is skipped and the register stays 0;
+//   if it goes the wrong way the poison runs and names itself in the output.
+//   Where the correct behaviour is NOT taken, the polarity is reversed - the
+//   register is set to 1 by an instruction that only runs on a fall-through.
+//   So both directions of every branch are covered, and no test can pass by
+//   accident just because the pipeline happened to skip something.
+//
+// NOTE ON THE +8 OFFSETS
+//   idx13 above uses +12 deliberately, to put two DISTINCT instructions in the
+//   shadow of the branch and prove FlushD and FlushE separately. That job is
+//   already done, so the branches below use a plain +8 and skip exactly one
+//   instruction. The instruction at PC+8 is still fetched down the wrong path,
+//   flushed, and then re-fetched from the redirected PC - so it executes
+//   exactly once, just one cycle later than it looks. See the slot trace in
+//   Pipeline_Top_TestBench.v.
+//
+//   mechanism                     proven by     breaks as
+//   ----------------------------  ------------  ------------------------------
+//   bne is not beq (taken)        idx22/23      x20 = 55 instead of 0
+//   bne is not beq (not taken)    idx25/26      x22 = 0  instead of 1
+//   blt, signed, negative rs1     idx27/28      x23 = 77 instead of 0
+//   bltu differs from blt         idx29/30      x24 = 0  instead of 1
+//   bge  = complement of blt      idx31/32      x25 = 66 instead of 0
+//   bgeu = complement of bltu     idx33/34      x26 = 88 instead of 0
+//   forwarding into a branch      idx36/37/38   x29 = 0  instead of 1
+//=============================================================================
+//
+// The operand pair that makes signed and unsigned genuinely disagree.
+// As SIGNED values:    -1 <  1            -> blt  taken, bge  not taken
+// As UNSIGNED values:  4294967295 >  1    -> bltu not taken, bgeu taken
+// Identical bits, opposite answers. A core that implements bltu as blt (or
+// either of them as beq) cannot get both of the tests below right.
+fff00913   // 20  0x50   addi x18, x0, -1      | x18 = 0xFFFFFFFF
+00100993   // 21  0x54   addi x19, x0, 1       | x19 = 1
+//
+00209463   // 22  0x58   bne  x1, x2, +8       | x1=5, x2=3, so 5 != 3 -> TAKEN.
+           //                                  |  THE HEADLINE TEST. Under the
+           //                                  |  old zero-flag-only hardware
+           //                                  |  this behaved as beq: 5 == 3 is
+           //                                  |  false, so it would NOT branch
+           //                                  |  and the poison below would run.
+03700a13   // 23  0x5c   addi x20, x0, 55      | MUST be skipped. x20 stays 0.
+00100a93   // 24  0x60   addi x21, x0, 1       | x21 = 1 - the branch target.
+           //                                  |  Confirms we landed where we
+           //                                  |  meant to, not just that we
+           //                                  |  left. (This one is fetched
+           //                                  |  down the wrong path, flushed,
+           //                                  |  and re-fetched - see the note
+           //                                  |  on +8 offsets above.)
+//
+00109463   // 25  0x64   bne  x1, x1, +8       | 5 != 5 is FALSE -> NOT taken.
+           //                                  |  The negative half of the bne
+           //                                  |  test. As beq this WOULD be
+           //                                  |  taken and would wrongly skip
+           //                                  |  the next line. Testing only
+           //                                  |  the taken direction would let
+           //                                  |  an "always branch" bug pass.
+00100b13   // 26  0x68   addi x22, x0, 1       | x22 = 1 via fall-through.
+//
+01394463   // 27  0x6c   blt  x18, x19, +8     | -1 < 1 SIGNED -> TAKEN.
+           //                                  |  Needs the N^V comparison, not
+           //                                  |  the zero flag. As beq: -1 == 1
+           //                                  |  is false -> not taken -> poison
+           //                                  |  runs.
+04d00b93   // 28  0x70   addi x23, x0, 77      | MUST be skipped. x23 stays 0.
+//
+01396463   // 29  0x74   bltu x18, x19, +8     | 0xFFFFFFFF < 1 UNSIGNED is
+           //                                  |  FALSE -> NOT taken. Same two
+           //                                  |  registers as the blt above,
+           //                                  |  opposite outcome. This pair is
+           //                                  |  the whole point: it is the one
+           //                                  |  test that a core treating
+           //                                  |  unsigned compares as signed
+           //                                  |  cannot pass, because passing
+           //                                  |  both requires answering the
+           //                                  |  SAME BITS two different ways.
+00100c13   // 30  0x78   addi x24, x0, 1       | x24 = 1 via fall-through.
+//
+0129d463   // 31  0x7c   bge  x19, x18, +8     | 1 >= -1 SIGNED -> TAKEN.
+           //                                  |  Operands swapped relative to
+           //                                  |  the blt, so this is its exact
+           //                                  |  complement - checks that
+           //                                  |  funct3[0] really does invert
+           //                                  |  the condition.
+04200c93   // 32  0x80   addi x25, x0, 66      | MUST be skipped. x25 stays 0.
+//
+01397463   // 33  0x84   bgeu x18, x19, +8     | 0xFFFFFFFF >= 1 UNSIGNED ->
+           //                                  |  TAKEN. Complement of the bltu
+           //                                  |  at idx29, and the fourth
+           //                                  |  corner of the signed/unsigned
+           //                                  |  x taken/not-taken square.
+05800d13   // 34  0x88   addi x26, x0, 88      | MUST be skipped. x26 stays 0.
+00100d93   // 35  0x8c   addi x27, x0, 1       | x27 = 1 - the bgeu target.
+//
+// Last test: the NEW branch logic must still see FORWARDED operands. The
+// condition evaluator moved out of the decoder and now sits next to the ALU in
+// EX, reading its flags - so it is fed by SrcAE/ForwardedRD2E, downstream of
+// the forwarding muxes. This check makes sure that is actually true.
+00300e13   // 36  0x90   addi x28, x0, 3       | x28 = 3
+002e1463   // 37  0x94   bne  x28, x2, +8      | rs1=x28 is produced ONE
+           //                                  |  instruction back, so it must
+           //                                  |  arrive by EX/MEM forwarding.
+           //                                  |  3 != 3 is FALSE -> NOT taken.
+           //                                  |  If x28 were read stale as 0,
+           //                                  |  then 0 != 3 is TRUE and the
+           //                                  |  branch would wrongly fire -
+           //                                  |  which is why the expected
+           //                                  |  outcome here is deliberately
+           //                                  |  NOT-taken. A test where the
+           //                                  |  stale value gave the same
+           //                                  |  answer would prove nothing.
+00100e93   // 38  0x98   addi x29, x0, 1       | x29 = 1 via fall-through.
+//
+//=============================================================================
+// PART 3 - THE FIRST REAL LOOP, AND THE SIGNED-OVERFLOW CORNER CASE
+//
+// WHY THIS SECTION HAD TO EXIST
+//   Part 2 tests blt and bge with the operand pair (-1, 1). Those tests are
+//   real, but they have a blind spot that only shows up under negative testing:
+//   -1 - 1 = -2 does NOT overflow, so for that pair the raw sign bit N happens
+//   to give the right answer and "blt = N" passes just as well as the correct
+//   "blt = N ^ V". Deliberately breaking Branch_Condition.v to use N alone did
+//   not fail a single signed-compare check.
+//
+//   A test that cannot fail is not a test. The V correction is the subtlest
+//   line in Branch_Condition.v and the easiest one to get wrong, so it needs an
+//   operand pair that actually overflows:
+//
+//        0x80000000 - 1  =  0x7FFFFFFF
+//
+//        true answer : -2147483648 < 1, so blt MUST be taken
+//        raw sign bit: sum[31] = 0, so N = 0  ->  "not less"  (WRONG)
+//        overflow    : V = 1, so N ^ V = 1    ->  "less"      (RIGHT)
+//
+//   That is the single case where the two implementations disagree, and it is
+//   now tested below.
+//
+// THE PROBLEM: 0x80000000 IS UNREACHABLE WITH THIS INSTRUCTION SET
+//   addi's immediate is 12 bits signed, so a single instruction can only
+//   produce values in [-2048, 2047]. This core has no lui, no shifts, and no
+//   multiply. The ONLY way to build 2^31 is to start at 1 and double it 31
+//   times.
+//
+// THE SOLUTION: WRITE A LOOP - WHICH IS NOW POSSIBLE FOR THE FIRST TIME
+//   31 doublings unrolled would be 31 lines of noise. With a working bne they
+//   become a 3-instruction loop. This is the first genuine loop this processor
+//   has ever run, and it is worth pausing on why it could not have been written
+//   before today:
+//
+//     * a loop needs a BACKWARD branch, and every backward branch is
+//       conditional on "am I done yet?" - which is an INEQUALITY test. beq
+//       alone cannot express "keep going while the counter is not zero".
+//       That is not a convenience; a machine with only beq cannot loop over a
+//       countdown at all without contorting the code.
+//     * before the hazard unit, the loop body's `addi x31, x31, -1` feeding
+//       `bne x31, x0` one instruction later would have read a stale counter and
+//       looped forever or exited early.
+//
+//   So this loop is simultaneously a test of the new branch conditions AND a
+//   test that everything built earlier still holds up under a control-flow
+//   pattern no straight-line program can produce. Note especially the two tight
+//   dependencies inside it - the counter feeds the branch that tests it from
+//   ONE instruction back, so every one of the 31 iterations depends on EX/MEM
+//   forwarding delivering the decrement into the branch comparison.
+//
+//   mechanism                     proven by     breaks as
+//   ----------------------------  ------------  ------------------------------
+//   backward branch / looping     idx41-43      x30 wrong, or the sim hangs
+//   forwarding into a loop branch idx42/43      wrong iteration count
+//   blt uses N^V, not N alone     idx44/45      x31 = 99 instead of 0
+//=============================================================================
+00100f13   // 39  0x9c   addi x30, x0, 1       | x30 = 1     - the value
+01f00f93   // 40  0xa0   addi x31, x0, 31      | x31 = 31    - the counter
+//
+//                                   LOOP TOP (0xa4). 31 iterations.
+01ef0f33   // 41  0xa4   add  x30, x30, x30    | x30 *= 2. The only way to shift
+           //                                  |  left on a core with no shifter
+           //                                  |  - adding a number to itself IS
+           //                                  |  a left shift by one.
+ffff8f93   // 42  0xa8   addi x31, x31, -1     | x31--
+fe0f9ce3   // 43  0xac   bne  x31, x0, -8      | loop while x31 != 0. Branches
+           //                                  |  BACKWARD to 0xa4: offset is
+           //                                  |  0xa4 - 0xac = -8. rs1=x31 was
+           //                                  |  written by the instruction
+           //                                  |  DIRECTLY above, so all 31
+           //                                  |  iterations depend on EX/MEM
+           //                                  |  forwarding reaching the branch
+           //                                  |  comparison. Without it the
+           //                                  |  branch would test a stale
+           //                                  |  counter every time.
+//                                   After 31 iterations: x30 = 2^31 = 0x80000000
+//                                                        x31 = 0
+//
+//   ENCODING NOTE - THE ONE I GOT WRONG THE FIRST TIME, AND HOW IT SHOWED UP
+//     A B-type immediate is stored scrambled, and the low nibble is the easy
+//     part to fumble. For -8, the 13-bit two's-complement value is
+//
+//          1_111111_1100_0        imm[12] imm[10:5] imm[4:1] imm[0]
+//
+//     Note imm[3] is SET: -8 is ...11111000, so bits 3 and 4 are both 1 and
+//     imm[4:1] = 1100. Writing it as 1000 (an easy slip - it looks like the
+//     "8") yields fe0f98e3 instead of fe0f9ce3, which is a valid instruction
+//     with offset -16 rather than -8.
+//
+//     What made that interesting is the SYMPTOM. -16 from 0xac lands on 0x9c,
+//     which is `addi x30, x0, 1` - so every iteration re-initialised BOTH the
+//     value and the counter and the loop ran forever, with x30 and x31 frozen
+//     at 1 and 30. The regression did not report "loop is broken"; it reported
+//     three unrelated-looking wrong values, and the real clue was that x30 = 1
+//     is a value only the SETUP instruction can produce. A branch with a wrong
+//     offset is still a perfectly legal branch - which is the same lesson as
+//     bne-decoding-as-beq, one level up.
+//
+013f4463   // 44  0xb0   blt  x30, x19, +8     | 0x80000000 < 1 SIGNED -> TAKEN.
+           //                                  |  THE OVERFLOW TEST, and the only
+           //                                  |  check in either program that
+           //                                  |  can tell N^V from N. The
+           //                                  |  subtraction 0x80000000 - 1
+           //                                  |  overflows the signed range and
+           //                                  |  produces 0x7FFFFFFF, whose sign
+           //                                  |  bit is 0 - so N alone says
+           //                                  |  "not less" and would fall
+           //                                  |  through to the poison below.
+           //                                  |  V = 1 flips it back to the
+           //                                  |  truth.
+06300f93   // 45  0xb4   addi x31, x0, 99      | MUST be skipped. x31 stays 0.
+           //                                  |  (Reusing the loop counter as
+           //                                  |  the poison register: it is
+           //                                  |  already 0 on exit, and the
+           //                                  |  register file is full.)
+013f2e33   // 46  0xb8   slt  x28, x30, x19    | x28 = 1. Does DOUBLE DUTY.
+           //                                  |  (a) It is the blt target, so a
+           //                                  |      nonzero x28 confirms the
+           //                                  |      branch landed here.
+           //                                  |  (b) It re-asks the branch's
+           //                                  |      question as an ARITHMETIC
+           //                                  |      instruction. slt and blt
+           //                                  |      must agree: both mean
+           //                                  |      "signed rs1 < rs2".
+           //                                  |
+           //                                  |  They did NOT agree before
+           //                                  |  today. ALU.v computed slt as
+           //                                  |  the bare sign bit of A-B, with
+           //                                  |  no overflow correction, so on
+           //                                  |  these exact operands it
+           //                                  |  returned 0 while blt (using
+           //                                  |  N^V) was correctly taken - the
+           //                                  |  same comparison answered two
+           //                                  |  different ways inside one core.
+           //                                  |  ALU.v now XORs V into slt too.
+           //                                  |  This line is what stops that
+           //                                  |  divergence from coming back.
+           //                                  |  Overwrites the x28 = 3 from
+           //                                  |  idx36, which had already done
+           //                                  |  its job at idx37.
+//
 //-----------------------------------------------------------------------------
 // NOTE ON THE BRANCH OFFSET AT idx 13
 //

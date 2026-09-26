@@ -117,6 +117,7 @@
 `include "Control_Unit_Top.v"    // Control_Unit_Top (+ main_decoder + ALU_decoder)
 `include "ALU.v"                 // ALU
 `include "Data_Mem.v"            // Data_Memory
+`include "Branch_Condition.v"    // Branch_Condition - funct3 + flags -> taken
 
 module Pipeline_Top (
     input wire clk,
@@ -138,6 +139,7 @@ module Pipeline_Top (
     // ---- ID/EX outputs: what execute sees ----
     wire        RegWriteE, ALUSrcE, MemWriteE, ResultSrcE, BranchE;
     wire [2:0]  ALUControlE;
+    wire [2:0]  funct3E;   // raw ISA field - picks WHICH branch comparison
     wire [31:0] RD1E, RD2E, ImmExtE, PCE;
     wire [4:0]  RdE, Rs1E, Rs2E;   // Rs1E/Rs2E: register NUMBERS, for forwarding
 
@@ -202,6 +204,7 @@ module Pipeline_Top (
         .MemWriteE   (MemWriteE),
         .ResultSrcE  (ResultSrcE),
         .BranchE     (BranchE),
+        .funct3E     (funct3E),
         .ALUControlE (ALUControlE),
         .RD1E        (RD1E),
         .RD2E        (RD2E),
@@ -228,6 +231,7 @@ module Pipeline_Top (
         .MemWriteE   (MemWriteE),
         .ResultSrcE  (ResultSrcE),
         .BranchE     (BranchE),
+        .funct3E     (funct3E),     // which of the six comparisons to apply
         .ALUControlE (ALUControlE),
         .RD1E        (RD1E),
         .RD2E        (RD2E),

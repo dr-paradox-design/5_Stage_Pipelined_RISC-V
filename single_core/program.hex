@@ -18,3 +18,178 @@
 00108463   // 0x30  beq  x1, x1, +8     | TAKEN (5 == 5)
 06300593   // 0x34  addi x11, x0, 99    | MUST be skipped -> x11 stays 0
 00700613   // 0x38  addi x12, x0, 7     | x12 = 7  (resumes at target)
+//
+//=============================================================================
+// PART 2 - THE OTHER FIVE CONDITIONAL BRANCHES
+//
+// Everything above this line was already passing before Branch_Condition.v
+// existed. Everything below it was WRONG, and wrong silently.
+//
+// RV32I has six conditional branches. They all share opcode 1100011 and are
+// distinguished only by funct3 - a field main_decoder.v never looked at. The
+// entire branch decision was  PCSrc = branch & zero, which is the beq test.
+// So bne, blt, bge, bltu and bgeu all decoded as branches, all subtracted, and
+// all got compared against the zero flag. Every one of them executed as beq.
+//
+// `bne x1, x2, L` branched when x1 EQUALLED x2. Not an unimplemented
+// instruction that trapped or did nothing - an instruction that did the
+// OPPOSITE of what it says, with no diagnostic of any kind. These tests exist
+// so that failure mode can never come back unnoticed.
+//
+// Each test pairs a branch with a "poison" instruction writing a distinctive
+// value. Correct behaviour skips the poison and the register stays 0; wrong
+// behaviour runs it and the register names the bug in the regression output.
+// Branches whose correct outcome is NOT-taken use the reverse polarity, so
+// both directions are covered and an "always branch" bug cannot slip through.
+//
+// This is an ISA-level test, not a microarchitecture one, so it is identical
+// to Part 2 of src/program.hex - byte for byte, since branch offsets are
+// PC-relative and everything else is address-independent. Both cores run the
+// same instructions and are expected to produce the same 12 register values.
+// That is the point of sharing the decode logic between them.
+//=============================================================================
+//
+// The operand pair where signed and unsigned genuinely disagree:
+//   as SIGNED    -1 < 1              -> blt taken,  bge not taken
+//   as UNSIGNED  4294967295 > 1      -> bltu not taken, bgeu taken
+// Same 32 bits, opposite answers. A core that conflates the two - or that
+// implements either as beq - cannot pass both of the tests below.
+fff00913   // 0x3c  addi x18, x0, -1    | x18 = 0xFFFFFFFF
+00100993   // 0x40  addi x19, x0, 1     | x19 = 1
+//
+00209463   // 0x44  bne  x1, x2, +8     | 5 != 3 -> TAKEN. THE HEADLINE TEST:
+           //                           |  as beq this would fall through.
+03700a13   // 0x48  addi x20, x0, 55    | MUST be skipped -> x20 stays 0
+00100a93   // 0x4c  addi x21, x0, 1     | x21 = 1 - confirms the target is right
+//
+00109463   // 0x50  bne  x1, x1, +8     | 5 != 5 is FALSE -> NOT taken.
+           //                           |  As beq this WOULD branch and skip
+           //                           |  the next line. The negative half:
+           //                           |  without it an "always branch" bug
+           //                           |  would pass the test above.
+00100b13   // 0x54  addi x22, x0, 1     | x22 = 1 via fall-through
+//
+01394463   // 0x58  blt  x18, x19, +8   | -1 < 1 SIGNED -> TAKEN. Needs the
+           //                           |  N^V comparison; the zero flag says
+           //                           |  nothing useful here.
+04d00b93   // 0x5c  addi x23, x0, 77    | MUST be skipped -> x23 stays 0
+//
+01396463   // 0x60  bltu x18, x19, +8   | 0xFFFFFFFF < 1 UNSIGNED is FALSE ->
+           //                           |  NOT taken. SAME two registers as the
+           //                           |  blt above, opposite outcome. This
+           //                           |  pair is the one test a core cannot
+           //                           |  pass by treating unsigned compares as
+           //                           |  signed, because passing both means
+           //                           |  answering the same bits two ways.
+00100c13   // 0x64  addi x24, x0, 1     | x24 = 1 via fall-through
+//
+0129d463   // 0x68  bge  x19, x18, +8   | 1 >= -1 SIGNED -> TAKEN. Operands
+           //                           |  swapped vs the blt, so this is its
+           //                           |  exact complement - proves funct3[0]
+           //                           |  really inverts the condition.
+04200c93   // 0x6c  addi x25, x0, 66    | MUST be skipped -> x25 stays 0
+//
+01397463   // 0x70  bgeu x18, x19, +8   | 0xFFFFFFFF >= 1 UNSIGNED -> TAKEN.
+           //                           |  Fourth corner of the
+           //                           |  signed/unsigned x taken/not-taken
+           //                           |  square.
+05800d13   // 0x74  addi x26, x0, 88    | MUST be skipped -> x26 stays 0
+00100d93   // 0x78  addi x27, x0, 1     | x27 = 1 - the bgeu target
+//
+// Final test. In the PIPELINED core this one checks that the relocated branch
+// condition logic still sees FORWARDED operands (x28 is produced one
+// instruction earlier, too recently to have reached the register file). The
+// single-cycle core has no forwarding and needs none - a register written at
+// the end of one cycle is readable at the start of the next. It is kept here
+// anyway so the two program files stay identical, and because it still checks
+// something real: that a branch reads its operands from the register file
+// correctly at all.
+00300e13   // 0x7c  addi x28, x0, 3     | x28 = 3
+002e1463   // 0x80  bne  x28, x2, +8    | 3 != 3 is FALSE -> NOT taken.
+           //                           |  Chosen so a STALE read of x28 (=0)
+           //                           |  would give 0 != 3 -> TRUE and wrongly
+           //                           |  branch. A test whose stale value gave
+           //                           |  the same answer would prove nothing.
+00100e93   // 0x84  addi x29, x0, 1     | x29 = 1 via fall-through
+//
+//=============================================================================
+// PART 3 - THE FIRST REAL LOOP, AND THE SIGNED-OVERFLOW CORNER CASE
+//
+// WHY THIS SECTION HAD TO EXIST
+//   The blt/bge tests in Part 2 use the operands (-1, 1), and -1 - 1 = -2 does
+//   not overflow. So for that pair the raw sign bit N gives the right answer
+//   and a buggy "blt = N" implementation passes the test just as happily as the
+//   correct "blt = N ^ V". This was found by deliberately breaking
+//   Branch_Condition.v and watching the signed checks stay green.
+//
+//   A check that cannot fail is not a check. The V correction is the subtlest
+//   line in the whole branch unit, so it needs a pair that actually overflows:
+//
+//        0x80000000 - 1  =  0x7FFFFFFF
+//
+//        true answer : -2147483648 < 1, so blt MUST be taken
+//        raw sign bit: sum[31] = 0, N = 0    ->  "not less"  (WRONG)
+//        with overflow: V = 1, N ^ V = 1     ->  "less"      (RIGHT)
+//
+// WHY IT NEEDS A LOOP
+//   addi's immediate is 12 bits signed, so one instruction can only reach
+//   [-2048, 2047]. This core has no lui, no shifts and no multiply, so the only
+//   route to 2^31 is to start at 1 and double 31 times. Unrolled that is 31
+//   lines of noise; with a working bne it is a 3-instruction loop.
+//
+//   This is the first loop this processor has ever run, and it could not have
+//   been written before the branch fix: a countdown loop needs to branch on
+//   "counter is NOT zero", and a machine that only has beq cannot express that.
+//   Being unable to loop is not a missing convenience - it is the difference
+//   between a calculator and a computer.
+//
+//   In the PIPELINED core this loop is also a forwarding stress test, since the
+//   counter feeds the branch that tests it from one instruction back. The
+//   single-cycle core needs none of that - which is exactly why it is useful to
+//   run the identical program on both and get identical answers.
+//=============================================================================
+00100f13   // 0x88  addi x30, x0, 1     | x30 = 1  - the value
+01f00f93   // 0x8c  addi x31, x0, 31    | x31 = 31 - the counter
+//                                      LOOP TOP (0x90), 31 iterations
+01ef0f33   // 0x90  add  x30, x30, x30  | x30 *= 2. Adding a number to itself IS
+           //                           |  a left shift by one - the only shift
+           //                           |  available on a core with no shifter.
+ffff8f93   // 0x94  addi x31, x31, -1   | x31--
+fe0f9ce3   // 0x98  bne  x31, x0, -8    | loop while x31 != 0. Target is
+           //                           |  0x98 - 8 = 0x90.
+           //                           |  ENCODING NOTE: -8 as a 13-bit value
+           //                           |  is ...11111000, so imm[4:1] = 1100,
+           //                           |  NOT 1000. Writing 1000 gives the
+           //                           |  valid-but-wrong offset -16, which
+           //                           |  here would jump back to 0x88 and
+           //                           |  re-initialise the loop forever.
+//                                      On exit: x30 = 2^31 = 0x80000000, x31 = 0
+013f4463   // 0x9c  blt  x30, x19, +8   | 0x80000000 < 1 SIGNED -> TAKEN.
+           //                           |  THE OVERFLOW TEST - the only check in
+           //                           |  either program that can distinguish
+           //                           |  N^V from N. The subtraction overflows
+           //                           |  and yields 0x7FFFFFFF, whose sign bit
+           //                           |  is 0, so N alone would fall through
+           //                           |  to the poison below.
+06300f93   // 0xa0  addi x31, x0, 99    | MUST be skipped -> x31 stays 0.
+           //                           |  (The loop counter is reused as the
+           //                           |  poison register - it is already 0 on
+           //                           |  exit and the register file is full.)
+013f2e33   // 0xa4  slt  x28, x30, x19  | x28 = 1. Does DOUBLE DUTY:
+           //                           |  (a) it is the blt target, so a
+           //                           |      nonzero x28 proves we landed;
+           //                           |  (b) it re-asks the branch's question
+           //                           |      as ARITHMETIC. slt and blt must
+           //                           |      agree - both mean "signed
+           //                           |      rs1 < rs2".
+           //                           |
+           //                           |  They did NOT agree before today.
+           //                           |  ALU.v computed slt as the bare sign
+           //                           |  bit of A-B with no overflow
+           //                           |  correction, so on these operands it
+           //                           |  returned 0 while blt (N^V) was
+           //                           |  correctly taken - one core answering
+           //                           |  the same comparison two ways. ALU.v
+           //                           |  now XORs V into slt as well; this
+           //                           |  line keeps them locked together.
+           //                           |  Overwrites the x28 = 3 from 0x7c.

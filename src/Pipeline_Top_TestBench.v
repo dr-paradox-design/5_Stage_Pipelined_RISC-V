@@ -123,9 +123,76 @@ module Pipeline_Top_TestBench();
         // Note what is NOT on that list any more: hand-scheduled NOPs. The
         // previous version of this program spent 5 whole cycles on them.
         //
-        // Wait comfortably past 2600 before sampling.
+        // PART 2 EXTENDS THE TRACE. The branch tests at idx20..38 add four more
+        // TAKEN branches, each costing 2 flushed slots. Rather than re-deriving
+        // the formula, here is the full fetch-slot trace of the tail, using the
+        // rule established above: a branch fetched in slot s is in EX during
+        // interval s+2, so slots s+1 and s+2 are killed and slot s+3 fetches
+        // the target.
+        //
+        //   slot 20  0x4c  idx19
+        //   slot 21  0x50  idx20  addi x18,-1
+        //   slot 22  0x54  idx21  addi x19,1
+        //   slot 23  0x58  idx22  bne x1,x2  TAKEN -> 0x60
+        //   slot 24  0x5c  idx23  KILLED (FlushE)
+        //   slot 25  0x60  idx24  KILLED (FlushD)   <- the target itself
+        //   slot 26  0x60  idx24  re-fetched, runs
+        //   slot 27  0x64  idx25  bne x1,x1  not taken
+        //   slot 28  0x68  idx26
+        //   slot 29  0x6c  idx27  blt  TAKEN -> 0x74
+        //   slot 30  0x70  idx28  KILLED
+        //   slot 31  0x74  idx29  KILLED
+        //   slot 32  0x74  idx29  re-fetched, bltu not taken
+        //   slot 33  0x78  idx30
+        //   slot 34  0x7c  idx31  bge  TAKEN -> 0x84
+        //   slot 35  0x80  idx32  KILLED
+        //   slot 36  0x84  idx33  KILLED
+        //   slot 37  0x84  idx33  re-fetched, bgeu TAKEN -> 0x8c
+        //   slot 38  0x88  idx34  KILLED
+        //   slot 39  0x8c  idx35  KILLED
+        //   slot 40  0x8c  idx35  re-fetched, runs
+        //   slot 41  0x90  idx36
+        //   slot 42  0x94  idx37  bne x28,x2  not taken
+        //   slot 43  0x98  idx38
+        //
+        // PART 3 adds the loop, and counting it is a nice exercise in what a
+        // taken branch actually costs:
+        //
+        //   slot 44  0x9c  idx39  addi x30,1
+        //   slot 45  0xa0  idx40  addi x31,31
+        //   slot 46  0xa4  idx41  <- iteration 1 begins
+        //
+        // Each iteration that LOOPS occupies 5 slots, not 3: the three real
+        // instructions plus the two wrong-path slots the taken backward branch
+        // flushes. So a 3-instruction loop body runs at 5 cycles per iteration,
+        // a 67% overhead, entirely because the branch is resolved in EX. This
+        // is the single most convincing argument for branch prediction in the
+        // whole project, and it only became measurable once the core could
+        // loop at all.
+        //
+        //   iteration k (k = 1..30, all taken):  add at slot 46 + 5*(k-1)
+        //   iteration 31 exits, so its bne is not taken and costs no flush:
+        //     slot 196  0xa4  add        (46 + 5*30)
+        //     slot 197  0xa8  addi
+        //     slot 198  0xac  bne  x31,x0  NOT taken (counter reached 0)
+        //     slot 199  0xb0  idx44  blt  TAKEN -> 0xb8
+        //     slot 200  0xb4  idx45  KILLED
+        //     slot 201  0xb8  idx46  KILLED
+        //     slot 202  0xb8  idx46  re-fetched, runs   <- LAST INSTRUCTION
+        //
+        //        t = 600 + 100*202 = 20800
+        //
+        // Note the recurring pattern in every +8 branch: the target is fetched
+        // TWICE - once speculatively down the wrong path where it is flushed,
+        // then again from the redirected PC where it actually runs. It executes
+        // exactly once. That is not a bug and not wasted work beyond the 2
+        // cycles a taken branch always costs; it is just what "flush everything
+        // younger than the branch" means when the target happens to be one of
+        // the things younger than the branch.
+        //
+        // Wait comfortably past 20800 before sampling.
         //---------------------------------------------------------------------
-        #2700;   // now t = 2825
+        #21000;   // now t = 21125
 
         $display("=== 5-stage pipelined RV32I regression (src/program.hex) ===");
 
@@ -150,8 +217,33 @@ module Pipeline_Top_TestBench();
         check_reg(16,  2); //addi x16, x0, 2  (spacer)
         check_reg(17,  7); //DECODE BYPASS    : add x17, x12, x0 at distance 3
 
+        //---------------------------------------------------------------------
+        // Every check below fails on the pre-Branch_Condition build, because
+        // that build decoded all six B-type branches as beq. These are ISA
+        // correctness checks, not pipeline checks - they would fail on the
+        // single-cycle core too, which is why single_core/program.hex now
+        // carries the same tests.
+        //---------------------------------------------------------------------
+        $display("-- branch conditions (all would fail when bne/blt/... acted as beq)");
+        check_reg(18, -1); //setup: 0xFFFFFFFF, the signed/unsigned discriminator
+        check_reg(19,  1); //setup
+        check_reg(20,  0); //bne  TAKEN     : as beq it would fall through -> 55
+        check_reg(21,  1); //...and landed on the right target
+        check_reg(22,  1); //bne  NOT taken : as beq it would branch -> 0
+        check_reg(23,  0); //blt  TAKEN     : -1 < 1 signed, needs N^V -> else 77
+        check_reg(24,  1); //bltu NOT taken : same bits unsigned, opposite answer
+        check_reg(25,  0); //bge  TAKEN     : 1 >= -1 signed -> else 66
+        check_reg(26,  0); //bgeu TAKEN     : 0xFFFFFFFF >= 1 unsigned -> else 88
+        check_reg(27,  1); //...and landed on the right target
+        check_reg(29,  1); //FORWARDING into the new branch condition logic
+
+        $display("-- loop + signed overflow (the only checks that can catch N vs N^V)");
+        check_reg(30, 32'h80000000); //31 iterations of a real backward-branch loop
+        check_reg(31,  0);           //blt on an OVERFLOWING subtraction was taken
+        check_reg(28,  1);           //slt agrees with blt on the overflow case
+
         if (errors == 0)
-            $display("RESULT: PASS - all 17 checks passed");
+            $display("RESULT: PASS - all 31 checks passed");
         else
             $display("RESULT: FAIL - %0d check(s) failed", errors);
 

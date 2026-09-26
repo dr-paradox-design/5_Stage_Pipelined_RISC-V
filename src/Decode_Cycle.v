@@ -95,6 +95,7 @@ module Decode_Cycle (
     output reg         ResultSrcE,   // control: WB value = load data, not ALU
     output reg         BranchE,      // control: this is a branch opcode
     output reg  [2:0]  ALUControlE,  // control: which ALU operation
+    output reg  [2:0]  funct3E,      // control: WHICH branch comparison (EX)
     output reg  [31:0] RD1E,         // data: rs1 value
     output reg  [31:0] RD2E,         // data: rs2 value
     output reg  [31:0] ImmExtE,      // data: sign-extended immediate
@@ -120,53 +121,42 @@ module Decode_Cycle (
     //=========================================================================
     // CONTROL UNIT
     //
-    // READ THIS BEFORE JUDGING THE .zero(1'b1) BELOW.
+    // THE .zero(1'b1) WORKAROUND IS GONE - AND WHY THAT MATTERS
     //
-    // Control_Unit_Top was written for the single-cycle core, where the ALU's
-    // zero flag was available in the same clock period as decoding. Internally
-    // it computes:
+    // Control_Unit_Top used to take the ALU's zero flag as an input, because in
+    // the single-cycle core it computed the whole branch decision internally:
     //
-    //       Branch (a.k.a. PCSrc) = <opcode is a branch> & zero
+    //       Branch (really PCSrc) = <opcode is a branch> & zero
     //
-    // In a PIPELINE that equation cannot be evaluated here. Decoding happens in
-    // ID; the comparison that produces the zero flag does not happen until the
-    // ALU runs in EX, one cycle later. The zero flag simply does not exist yet
-    // at this point in time.
+    // A pipeline cannot evaluate that equation here. Decoding happens in ID;
+    // the flag it depends on is not produced until the ALU runs in EX, one
+    // cycle later. The flag does not exist yet at this point in time.
     //
-    // What we need out of the decoder is only the LEFT half of that AND - the
-    // raw "is this a branch instruction?" bit. Tying zero to 1'b1 gives exactly
-    // that, because  x & 1 == x :
+    // This file used to work around that by passing `.zero(1'b1)`, exploiting
+    // x & 1 == x to neutralise the AND gate and recover just the raw branch-
+    // opcode bit, then redoing the real AND in Execute_Cycle.v. It worked, but
+    // it was a hack papering over a genuine layering mistake in the decoder.
     //
-    //       BranchD = <opcode is a branch> & 1 = <opcode is a branch>
+    // The decoder has now been fixed properly: main_decoder.v emits a raw
+    // `Branch` bit and has no `zero` port at all, so there is nothing left to
+    // neutralise. The condition is evaluated by Branch_Condition.v in whichever
+    // stage holds the ALU flags - here that is Execute_Cycle.v.
     //
-    // The other half of the AND is then performed in Execute_Cycle.v, where the
-    // real zero flag exists:
+    // That refactor is also what made bne/blt/bge/bltu/bgeu possible. The old
+    // single-flag test could only ever express beq; all five other branches
+    // silently executed AS beq. See Branch_Condition.v.
     //
-    //       assign PCSrcE = BranchE & ZeroE;
-    //
-    // So the logic is not lost or weakened - it is SPLIT ACROSS TWO STAGES,
-    // which is the whole point of pipelining.
-    //
-    // WHY THIS IS NOT THE OLD BUG
-    //   The single-cycle core once had a genuine defect where main_decoder's
-    //   zero port was hardcoded to 1'b0 (documented in
-    //   docs/RV32I_Single_Cycle_Core.pdf, section 6). That was fatal because
-    //   x & 0 == 0 always - the branch condition was destroyed and beq could
-    //   never be taken. Tying it to 1'b1 is the opposite: it is the identity
-    //   element of AND, so it destroys nothing and merely defers the real test.
-    //
-    // WHY NOT JUST ADD A CLEAN "branch_op" OUTPUT TO main_decoder?
-    //   That would be tidier, but it means editing main_decoder.v,
-    //   Control_Unit_Top.v and Single_Cycle_Top.v - three files belonging to a
-    //   core that currently passes its regression. Keeping single_core/ frozen
-    //   and untouched means any bug found here is provably a pipeline bug, not
-    //   a regression I introduced in the shared modules.
+    // funct3 IS NOW NEEDED TWICE
+    //   ALU_decoder consumes it here in ID to pick the ALU operation. But the
+    //   branch condition ALSO depends on it, and that test happens in EX. So
+    //   funct3 has become a signal with a consumer in a later stage, which is
+    //   precisely the criterion for earning a seat in the pipeline register -
+    //   see funct3E in the ID/EX block at the bottom of this file.
     //=========================================================================
     Control_Unit_Top Control_Unit_Top (
         .Op         (InstrD[6:0]),
         .funct3     (InstrD[14:12]),
         .funct7     (InstrD[31:25]),
-        .zero       (1'b1),          // see the long explanation directly above
         .RegWrite   (RegWriteD),
         .ImmSrc     (ImmSrcD),
         .ALUSrc     (ALUSrcD),
@@ -356,6 +346,7 @@ module Decode_Cycle (
             ResultSrcE  <= 1'b0;
             BranchE     <= 1'b0;
             ALUControlE <= 3'b000;
+            funct3E     <= 3'b000;
             RD1E        <= 32'h00000000;
             RD2E        <= 32'h00000000;
             ImmExtE     <= 32'h00000000;
@@ -372,6 +363,16 @@ module Decode_Cycle (
             ResultSrcE  <= ResultSrcD;
             BranchE     <= BranchD;
             ALUControlE <= ALUControlD;
+            // funct3 rides along RAW, undecoded. Every other control bit in
+            // this backpack has already been chewed into a mux select by the
+            // decoder above; funct3E is the one exception, because its second
+            // consumer (Branch_Condition in EX) wants the original ISA field,
+            // not a derived signal. Decoding it here would mean inventing a
+            // 3-bit "branch type" encoding that carries exactly the same
+            // information in exactly as many bits - pure ceremony. Sending the
+            // architectural field itself is both cheaper and easier to read
+            // against the ISA manual.
+            funct3E     <= InstrD[14:12];
             // ---- the data ----
             // RD1D_fwd / RD2D_fwd, not the raw RD1D / RD2D: the write-through
             // bypass above has already substituted the WB value if this
