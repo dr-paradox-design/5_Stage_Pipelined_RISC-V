@@ -228,9 +228,25 @@ module Pipeline_Top_TestBench();
         //
         //        t = 600 + 100*253 = 25900
         //
-        // Wait comfortably past 25900 before sampling.
+        // PART 7 (jal / jalr) has 5 taken jumps; each costs its 2 flushed slots,
+        // exactly like a taken branch:
+        //
+        //   slot 254  0x188  jal          slot 267  0x1a4  jal x0
+        //   255-256   KILLED              268-269   KILLED
+        //   slot 257  0x194  sw           slot 270  0x1b4  addi
+        //   slot 258  0x198  jal (call)   slot 271  0x1b8  jalr
+        //   259-260   KILLED              272-273   KILLED
+        //   slot 261  0x1a8  sw           slot 274  0x1c4  sw
+        //   slot 262  0x1ac  jalr (ret)   slot 275  0x1c8  auipc
+        //   263-264   KILLED              slot 276  0x1cc  sw
+        //   slot 265  0x19c  addi         slot 277  0x1d0  lw  <- LAST
+        //   slot 266  0x1a0  sw
+        //
+        //        t = 600 + 100*277 = 28300
+        //
+        // Wait comfortably past 28300 before sampling.
         //---------------------------------------------------------------------
-        #26200;   // now t = 26325
+        #28600;   // now t = 28725
 
         $display("=== 5-stage pipelined RV32I regression (src/program.hex) ===");
 
@@ -310,8 +326,18 @@ module Pipeline_Top_TestBench();
         check_mem(38, 32'h00001170); //auipc x15, 1   at 0x170
         check_mem(39, 32'h00078000); //lui   x15, 0x78 - rs1 field matches RdM; must NOT forward
 
+        $display("-- jal / jalr (both were silent no-ops before)");
+        check_mem(40, 32'h0000018c); //jal  link = PC+4, wrong-path addis flushed
+        check_mem(41, 32'd55);       //code after the call ran once the function returned
+        check_mem(42, 32'h0000019c); //link value seen inside the function
+        check_mem(43, 32'h00000000); //POISON: store after `ret` was flushed
+        check_mem(44, 32'h00000000); //POISON: stores after jalr were flushed
+        check_mem(45, 32'h000001bc); //jalr rd == rs1: link written, target used old rs1
+        check_mem(46, 32'h000001c8); //jalr cleared bit 0 of the target (else 0x1c9)
+        check_reg(15,  1);           //x15 restored again at the very end
+
         if (errors == 0)
-            $display("RESULT: PASS - all 55 checks passed");
+            $display("RESULT: PASS - all 63 checks passed");
         else
             $display("RESULT: FAIL - %0d check(s) failed", errors);
 

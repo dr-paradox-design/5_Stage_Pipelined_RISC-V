@@ -20,6 +20,7 @@ module Single_Cycle_Top(clk,rst);
         wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch;
         wire [2:0] ImmSrc;
         wire [1:0] ALUSrcA;
+        wire Jump, Jalr;
         wire [31:0] SrcA_Top;
         wire [31:0] WriteData;
 
@@ -40,7 +41,8 @@ module Single_Cycle_Top(clk,rst);
         //Operand A: rs1 normally, PC for auipc, 0 for lui (both are A + U-imm).
         assign SrcA_Top = (ALUSrcA == 2'b01) ? PC_Top :
                           (ALUSrcA == 2'b10) ? 32'h00000000 : RD1_Top;
-        assign WriteData = ResultSrc ? Read_Data_Top : ALU_Result_Top;
+        //jal/jalr write the return address PC+4 instead of the ALU result.
+        assign WriteData = ResultSrc ? Read_Data_Top : Jump ? PCPlus4 : ALU_Result_Top;
 
         //=====================================================================
         // PC-SOURCE DECISION
@@ -60,7 +62,9 @@ module Single_Cycle_Top(clk,rst);
         // branch instruction to all six.
         //=====================================================================
         assign PCSrc = Branch & BranchTaken;
-        assign PC_Next_Top = PCSrc ? PCTarget : PCPlus4;
+        //Jumps always redirect: jal to PC+imm (PCTarget), jalr to (rs1+imm)&~1.
+        assign PC_Next_Top = (Jump & Jalr) ? {ALU_Result_Top[31:1], 1'b0} :
+                             (PCSrc | Jump) ? PCTarget : PCPlus4;
 
     PC_Module PC_Module(
         .clk(clk),
@@ -149,6 +153,8 @@ module Single_Cycle_Top(clk,rst);
         .MemWrite(MemWrite),
         .ResultSrc(ResultSrc),
         .Branch(Branch),   //raw opcode bit now, ANDed with BranchTaken above
+        .Jump(Jump),
+        .Jalr(Jalr),
         .funct3(RD_Instr[14:12]),
         .funct7(RD_Instr[31:25]),
         .ALUControl(ALU_Control_Top)

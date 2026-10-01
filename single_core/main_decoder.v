@@ -50,6 +50,8 @@
 //   1100011  B-type    beq bne blt bge bltu bgeu
 //   0110111  U-type    lui
 //   0010111  U-type    auipc
+//   1101111  J-type    jal
+//   1100111  I-type    jalr
 //
 //   Anything else decodes to all-zeros: no register write, no memory write, no
 //   branch. Architecturally inert rather than actively destructive. This core
@@ -59,21 +61,25 @@
 //   them.
 //=============================================================================
 
-module main_decoder(op,RegWrite,MemWrite,ImmSrc,ALUSrc,ALUSrcA,ResultSrc,Branch,ALUOp);
+module main_decoder(op,RegWrite,MemWrite,ImmSrc,ALUSrc,ALUSrcA,ResultSrc,Branch,Jump,Jalr,ALUOp);
     //input and output declaration
     input [6:0] op;
     output RegWrite,MemWrite,ALUSrc,Branch,ResultSrc ;
     output [1:0] ALUOp;
     output [2:0] ImmSrc;   //WIDENED from [1:0]: U-type is the 4th format, J-type will be the 5th
     output [1:0] ALUSrcA;  //NEW: ALU operand A = rs1 (00), PC (01) or zero (10)
+    output Jump;           //NEW: unconditional PC redirect, rd <- PC+4  (jal, jalr)
+    output Jalr;           //NEW: target is rs1+imm (from the ALU), not PC+imm
 
     wire lui   = (op == 7'b0110111);
     wire auipc = (op == 7'b0010111);
+    wire jal   = (op == 7'b1101111);
+    wire jalr  = (op == 7'b1100111);
 
     //if op is 0110011 or 0000011 or 0010011 (or lui/auipc) then RegWrite=1 else RegWrite=0
-    assign RegWrite = (op == 7'b0110011) | (op == 7'b0000011) | (op == 7'b0010011) | lui | auipc ? 1'b1 : 1'b0;
+    assign RegWrite = (op == 7'b0110011) | (op == 7'b0000011) | (op == 7'b0010011) | lui | auipc | jal | jalr ? 1'b1 : 1'b0;
     assign MemWrite = (op == 7'b0100011) ? 1'b1 : 1'b0;
-    assign ALUSrc = (op == 7'b0000011) | (op == 7'b0010011) | (op == 7'b0100011) | lui | auipc ? 1'b1 : 1'b0;
+    assign ALUSrc = (op == 7'b0000011) | (op == 7'b0010011) | (op == 7'b0100011) | lui | auipc | jalr ? 1'b1 : 1'b0;
 
     //lui and auipc are both just "A + imm" with ALUOp = 00 (add) and the
     //U-type immediate {instr[31:12], 12'b0} on operand B. The only thing that
@@ -92,10 +98,21 @@ module main_decoder(op,RegWrite,MemWrite,ImmSrc,ALUSrc,ALUSrcA,ResultSrc,Branch,
     //flags, in whichever stage those flags exist. See the header above.
     assign Branch = (op == 7'b1100011) ? 1'b1 : 1'b0;
 
-    //000 = I, 001 = S, 010 = B, 011 = U  (see Sign_Extend.v)
+    //JUMPS. Both write the return address PC+4 into rd and always redirect.
+    //They differ only in WHERE they go:
+    //    jal  : PC + J-imm          - the same PC-relative adder branches use
+    //    jalr : (rs1 + I-imm) & ~1  - computed by the ALU: ALUOp 00 (add),
+    //                                 ALUSrc = imm, ALUSrcA = rs1 (forwarded)
+    //jal uses neither rs1 nor the ALU result, so its ALU work is don't-care.
+    assign Jump = jal | jalr;
+    assign Jalr = jalr;
+
+    //000 = I, 001 = S, 010 = B, 011 = U, 100 = J  (see Sign_Extend.v)
+    //jalr is I-type, so it takes the 000 default.
     assign ImmSrc = (op == 7'b0100011) ? 3'b001 :
                     (op == 7'b1100011) ? 3'b010 :
-                    (lui | auipc)      ? 3'b011 : 3'b000;
+                    (lui | auipc)      ? 3'b011 :
+                    jal                ? 3'b100 : 3'b000;
 
     //ALUOp tells ALU_decoder what KIND of instruction this is, so it knows
     //whether funct3/funct7 are meaningful:

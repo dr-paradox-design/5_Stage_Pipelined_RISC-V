@@ -95,6 +95,8 @@ module Decode_Cycle (
     output reg         MemWriteE,    // control: store to data memory in MEM
     output reg         ResultSrcE,   // control: WB value = load data, not ALU
     output reg         BranchE,      // control: this is a branch opcode
+    output reg         JumpE,        // control: jal/jalr - always redirect
+    output reg         JalrE,        // control: jump target comes from the ALU
     output reg  [3:0]  ALUControlE,  // control: which ALU operation
     output reg  [2:0]  funct3E,      // control: WHICH branch comparison (EX)
     output reg  [31:0] RD1E,         // data: rs1 value
@@ -114,6 +116,7 @@ module Decode_Cycle (
     wire        MemWriteD;
     wire        ResultSrcD;
     wire        BranchD;
+    wire        JumpD, JalrD;
     wire [2:0]  ImmSrcD;
     wire [1:0]  ALUSrcAD;
     wire [3:0]  ALUControlD;
@@ -166,6 +169,8 @@ module Decode_Cycle (
         .MemWrite   (MemWriteD),
         .ResultSrc  (ResultSrcD),
         .Branch     (BranchD),       // = raw branch-opcode bit, NOT "branch taken"
+        .Jump       (JumpD),
+        .Jalr       (JalrD),
         .ALUControl (ALUControlD)
     );
 
@@ -349,6 +354,8 @@ module Decode_Cycle (
             MemWriteE   <= 1'b0;
             ResultSrcE  <= 1'b0;
             BranchE     <= 1'b0;
+            JumpE       <= 1'b0;   // a flushed jump must NOT redirect
+            JalrE       <= 1'b0;
             ALUControlE <= 4'b0000;
             funct3E     <= 3'b000;
             RD1E        <= 32'h00000000;
@@ -367,6 +374,8 @@ module Decode_Cycle (
             MemWriteE   <= MemWriteD;
             ResultSrcE  <= ResultSrcD;
             BranchE     <= BranchD;
+            JumpE       <= JumpD;
+            JalrE       <= JalrD;
             ALUControlE <= ALUControlD;
             // funct3 rides along RAW, undecoded. Every other control bit in
             // this backpack has already been chewed into a mux select by the

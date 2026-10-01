@@ -554,6 +554,62 @@ fffff7b7   // 88  0x160  lui  x15, 0xfffff     | 0xFFFFF000
 08f02e23   // 96  0x180  sw   x15, 156(x0)     | mem[39]
 04002783   // 97  0x184  lw   x15, 64(x0)      | restore x15 from mem[16]
 //
+//=============================================================================
+// PART 7 - jal AND jalr
+//
+//   Both opcodes used to be silent no-ops, so execution just fell through
+//   every jump. This part is a real call / return, plus the two jump-only
+//   details that are easy to get wrong:
+//
+//     - the LINK value (rd = PC+4) has to reach rd through forwarding and the
+//       decode bypass exactly like an ALU result does
+//     - jalr's target is (rs1 + imm) with bit 0 CLEARED, and rs1 may need
+//       forwarding from the instruction right before it
+//
+//   CONTROL FLOW (addresses):
+//     0x188  jal  x15,+12  ------------------------> 0x194  (kills 0x18c,0x190)
+//     0x194  store link                    mem[40] = 0x18c
+//     0x198  jal  x15,+16  ------------------------> 0x1a8  CALL
+//     0x1a8    store link inside "function" mem[42] = 0x19c
+//     0x1ac    jalr x0,0(x15)  --------------------> 0x19c  RETURN
+//     0x19c  addi x15,55 ; store           mem[41] = 55  (code after the call ran)
+//     0x1a4  jal  x0,+16  (plain "j") -------------> 0x1b4  skip the function
+//     0x1b4  addi x15,0x1c1  (ODD on purpose)
+//     0x1b8  jalr x15,4(x15) ----------------------> 0x1c4  (0x1c5 & ~1)
+//     0x1c4  store link                    mem[45] = 0x1bc
+//     0x1c8  auipc x15,0 ; store           mem[46] = 0x1c8
+//
+//   The bit-0 check is indirect on purpose. instruction_Memory ignores A[1:0],
+//   so fetching from 0x1c5 would still return the right instruction - the bug
+//   would only show up as an ODD PC from then on. auipc reads that PC back:
+//   0x1c8 if bit 0 was cleared, 0x1c9 if not.
+//
+//   mem[43] and mem[44] are POISON: only wrong-path stores (that a jump should
+//   have flushed) can write them. They must stay 0.
+//=============================================================================
+00c007ef   // 98  0x188  jal  x15, +12         | x15 = 0x18c, go to 0x194
+04d00793   // 99  0x18c  addi x15, x0, 77      | KILLED (would corrupt the link)
+04200793   // 100 0x190  addi x15, x0, 66      | KILLED
+0af02023   // 101 0x194  sw   x15, 160(x0)     | mem[40] = 0x18c
+010007ef   // 102 0x198  jal  x15, +16         | CALL: x15 = 0x19c, go to 0x1a8
+03700793   // 103 0x19c  addi x15, x0, 55      | return lands here
+0af02223   // 104 0x1a0  sw   x15, 164(x0)     | mem[41] = 55
+0100006f   // 105 0x1a4  jal  x0, +16          | "j 0x1b4" - rd = x0, link discarded
+0af02423   // 106 0x1a8  sw   x15, 168(x0)     | FUNCTION: mem[42] = 0x19c
+00078067   // 107 0x1ac  jalr x0, 0(x15)       | RETURN ("ret") -> 0x19c
+0af02623   // 108 0x1b0  sw   x15, 172(x0)     | POISON mem[43] - killed by the return
+1c100793   // 109 0x1b4  addi x15, x0, 0x1c1   | x15 = 0x1c1, odd
+004787e7   // 110 0x1b8  jalr x15, 4(x15)      | rs1 forwarded from the line above.
+           //                                  |  0x1c1 + 4 = 0x1c5 -> & ~1 = 0x1c4
+           //                                  |  x15 = 0x1bc. rd == rs1: the
+           //                                  |  target must use the OLD x15.
+0af02823   // 111 0x1bc  sw   x15, 176(x0)     | POISON mem[44] - killed
+0af02823   // 112 0x1c0  sw   x15, 176(x0)     | POISON mem[44] - killed
+0af02a23   // 113 0x1c4  sw   x15, 180(x0)     | mem[45] = 0x1bc
+00000797   // 114 0x1c8  auipc x15, 0          | 0x1c8 - proves bit 0 was cleared
+0af02c23   // 115 0x1cc  sw   x15, 184(x0)     | mem[46]
+04002783   // 116 0x1d0  lw   x15, 64(x0)      | restore x15 from mem[16]
+//
 //-----------------------------------------------------------------------------
 // NOTE ON THE BRANCH OFFSET AT idx 13
 //

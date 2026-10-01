@@ -80,6 +80,8 @@ module Execute_Cycle (
     input  wire        MemWriteE,
     input  wire        ResultSrcE,
     input  wire        BranchE,      // raw branch-opcode bit (NOT "taken")
+    input  wire        JumpE,        // jal/jalr: unconditional redirect
+    input  wire        JalrE,        // jalr: target = (rs1 + imm) & ~1, from the ALU
     input  wire [2:0]  funct3E,      // WHICH branch comparison: beq/bne/blt/...
     input  wire [3:0]  ALUControlE,
     input  wire [31:0] RD1E,
@@ -118,6 +120,9 @@ module Execute_Cycle (
     //-------------------------------------------------------------------------
     wire [31:0] SrcBE;        // second ALU operand after the ALUSrc mux
     wire [31:0] ALU_ResultE;
+    wire [31:0] PCRelTargetE; // PC + imm   (branches, jal)
+    wire [31:0] PCPlus4E;     // link value (jal, jalr)
+    wire [31:0] ExResultE;    // what EX hands to MEM: ALU result or link value
     wire        ZeroE;        // ALU flag: result was all zeros
     wire        NE, CE, VE;   // negative / carry / overflow - ALL now consumed
     wire        BranchTakenE; // Branch_Condition's verdict on funct3E + flags
@@ -304,7 +309,8 @@ module Execute_Cycle (
         .BranchTaken (BranchTakenE)
     );
 
-    assign PCSrcE = BranchE & BranchTakenE;
+    // A jump is a branch whose condition is always true.
+    assign PCSrcE = (BranchE & BranchTakenE) | JumpE;
 
     //-------------------------------------------------------------------------
     // BRANCH TARGET ADDER
@@ -320,8 +326,26 @@ module Execute_Cycle (
     PC_Adder Branch_Adder (
         .a (PCE),
         .b (ImmExtE),
-        .c (PCTargetE)
+        .c (PCRelTargetE)
     );
+
+    // Redirect target. Branches and jal are PC-relative (the adder above).
+    // jalr is register-relative: the ALU has already computed rs1 + imm with
+    // rs1 FORWARDED, so `jalr x0, 0(x1)` right after the instruction that
+    // wrote x1 still returns to the right place. The ISA then clears bit 0.
+    assign PCTargetE = JalrE ? {ALU_ResultE[31:1], 1'b0} : PCRelTargetE;
+
+    // LINK VALUE. jal/jalr write PC+4 to rd. Instead of adding a third input to
+    // the write-back mux (and a PC+4 field to two more pipeline registers), it
+    // replaces the ALU result right here. From EX/MEM on, a jump looks exactly
+    // like an ALU instruction - so EX/MEM forwarding, MEM/WB forwarding, the
+    // decode bypass and write-back all handle the link register for free.
+    PC_Adder Link_Adder (
+        .a (PCE),
+        .b (32'h00000004),
+        .c (PCPlus4E)
+    );
+    assign ExResultE = JumpE ? PCPlus4E : ALU_ResultE;
 
     //-------------------------------------------------------------------------
     // ALU
@@ -405,7 +429,7 @@ module Execute_Cycle (
             RegWriteM   <= RegWriteE;
             MemWriteM   <= MemWriteE;
             ResultSrcM  <= ResultSrcE;
-            ALU_ResultM <= ALU_ResultE;   // load/store address, or the answer
+            ALU_ResultM <= ExResultE;     // load/store address, the answer, or PC+4 for a jump
             WriteDataM  <= ForwardedRD2E; // rs2, AFTER forwarding - see note above
             RdM         <= RdE;
         end
