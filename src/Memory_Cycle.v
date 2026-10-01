@@ -44,6 +44,7 @@ module Memory_Cycle (
     input  wire [31:0] ALU_ResultM,  // the address for lw/sw, else the answer
     input  wire [31:0] WriteDataM,   // rs2 - the value a store writes
     input  wire [4:0]  RdM,
+    input  wire [2:0]  funct3M,      // access width: b/h/w, and lb vs lbu
 
     // ---- forward path out, into write-back (outputs of MEM/WB) ------------
     output reg         RegWriteW,
@@ -56,7 +57,27 @@ module Memory_Cycle (
     //-------------------------------------------------------------------------
     // The only combinational signal produced in this stage.
     //-------------------------------------------------------------------------
-    wire [31:0] ReadDataM;
+    wire [31:0] ReadWordM;    // raw 32-bit row out of Data_Memory
+    wire [31:0] ReadDataM;    // after byte/half select + extension
+    wire [31:0] MemWDM;       // store data copied into every byte lane
+    wire [3:0]  ByteEnM;      // which lanes a store may write
+
+    //-------------------------------------------------------------------------
+    // LOAD/STORE UNIT - sb/sh/sw -> byte-enables, lb/lh/lbu/lhu -> extended
+    // value. The extension happens HERE, before MEM/WB, so ReadDataW is already
+    // the final architectural value: MEM/WB forwarding and the decode bypass
+    // hand consumers the extended result, never the raw memory word.
+    //-------------------------------------------------------------------------
+    Load_Store_Unit Load_Store_Unit (
+        .funct3     (funct3M),
+        .addr_lo    (ALU_ResultM[1:0]),
+        .MemWrite   (MemWriteM),
+        .StoreData  (WriteDataM),
+        .ReadWord   (ReadWordM),
+        .ByteEnable (ByteEnM),
+        .WriteData  (MemWDM),
+        .LoadData   (ReadDataM)
+    );
 
     //-------------------------------------------------------------------------
     // DATA MEMORY - reused unmodified from single_core/.
@@ -76,9 +97,9 @@ module Memory_Cycle (
         .clk (clk),
         .rst (rst),
         .A   (ALU_ResultM),   // address
-        .WD  (WriteDataM),    // data in  (stores)
-        .WE  (MemWriteM),     // store enable
-        .RD  (ReadDataM)      // data out (loads)
+        .WD  (MemWDM),        // data in  (stores), lane-replicated
+        .WE  (ByteEnM),       // per-byte store enables
+        .RD  (ReadWordM)      // data out (loads), whole word
     );
 
     //=========================================================================

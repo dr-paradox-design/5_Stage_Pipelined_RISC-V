@@ -610,6 +610,69 @@ fffff7b7   // 88  0x160  lui  x15, 0xfffff     | 0xFFFFF000
 0af02c23   // 115 0x1cc  sw   x15, 184(x0)     | mem[46]
 04002783   // 116 0x1d0  lw   x15, 64(x0)      | restore x15 from mem[16]
 //
+//=============================================================================
+// PART 8 - BYTE AND HALFWORD LOADS / STORES
+//
+//   Data_Memory used to be word-only and nobody looked at funct3 for memory
+//   ops, so every lb/lh/lbu/lhu behaved as lw and every sb/sh as sw. Now
+//   Load_Store_Unit.v picks byte lanes and does the sign / zero extension.
+//
+//   LOADS read one test word, mem[48] = 0x80FF7F01, whose four bytes cover
+//   every case:  byte0 = 01   byte1 = 7F (positive)   byte2 = FF   byte3 = 80
+//   (both negative, and 0x80FF is a negative half).
+//
+//   load             correct       as lw (old)
+//   ---------------  ------------  ------------
+//   lb  x15, 194     0xFFFFFFFF    0x80FF7F01   byte 2, sign-extended
+//   lbu x15, 194     0x000000FF    0x80FF7F01   byte 2, zero-extended
+//   lb  x15, 193     0x0000007F    0x80FF7F01   positive byte: no 1s filled
+//   lh  x15, 194     0xFFFF80FF    0x80FF7F01   upper half, sign-extended
+//   lhu x15, 194     0x000080FF    0x80FF7F01   upper half, zero-extended
+//   lh  x15, 192     0x00007F01    0x80FF7F01   lower half, positive
+//   lb  x15, 195     0xFFFFFF80    0x80FF7F01   top byte
+//
+//   Each load is followed by a store of x15, so every one of them also takes
+//   the LOAD-USE STALL and then MEM/WB-forwards the EXTENDED value - proof
+//   that extension happens before the MEM/WB register, not after it.
+//
+//   STORES must touch only their own byte lanes:
+//     mem[49] starts 0:          sb 0x..CD @197 -> 0x0000CD00
+//                                sh 0x34AB @198 -> 0x34ABCD00
+//     mem[50] = 0xFFFFFFFF, then sb 0    @201 -> 0xFFFF00FF
+//                                sh 0    @202 -> 0x000000FF
+//   As sw (old) both words would have been overwritten whole.
+//=============================================================================
+80ff87b7   // 117 0x1d4  lui  x15, 0x80ff8     | 0x80FF8000. Its rs2 FIELD (imm
+           //                                  |  bits) reads as 15 = the lw's rd
+           //                                  |  above, so the hazard unit takes
+           //                                  |  a needless 1-cycle stall. Known,
+           //                                  |  harmless - see the U-type notes.
+f0178793   // 118 0x1d8  addi x15, x15, -255   | 0x80FF7F01
+0cf02023   // 119 0x1dc  sw   x15, 192(x0)     | mem[48] = the test word
+0c200783   // 120 0x1e0  lb   x15, 194(x0)     | 0xFFFFFFFF
+0cf02623   // 121 0x1e4  sw   x15, 204(x0)     | mem[51]
+0c204783   // 122 0x1e8  lbu  x15, 194(x0)     | 0x000000FF
+0cf02823   // 123 0x1ec  sw   x15, 208(x0)     | mem[52]
+0c100783   // 124 0x1f0  lb   x15, 193(x0)     | 0x0000007F
+0cf02a23   // 125 0x1f4  sw   x15, 212(x0)     | mem[53]
+0c201783   // 126 0x1f8  lh   x15, 194(x0)     | 0xFFFF80FF
+0cf02c23   // 127 0x1fc  sw   x15, 216(x0)     | mem[54]
+0c205783   // 128 0x200  lhu  x15, 194(x0)     | 0x000080FF
+0cf02e23   // 129 0x204  sw   x15, 220(x0)     | mem[55]
+0c001783   // 130 0x208  lh   x15, 192(x0)     | 0x00007F01
+0ef02023   // 131 0x20c  sw   x15, 224(x0)     | mem[56]
+0c300783   // 132 0x210  lb   x15, 195(x0)     | 0xFFFFFF80
+0ef02223   // 133 0x214  sw   x15, 228(x0)     | mem[57]
+1234b7b7   // 134 0x218  lui  x15, 0x1234b     |
+bcd78793   // 135 0x21c  addi x15, x15, -1075  | 0x1234ABCD
+0cf002a3   // 136 0x220  sb   x15, 197(x0)     | mem[49] byte 1 = CD
+0087d793   // 137 0x224  srli x15, x15, 8      | 0x001234AB
+0cf01323   // 138 0x228  sh   x15, 198(x0)     | mem[49] bytes 3:2 = 34AB
+0d202423   // 139 0x22c  sw   x18, 200(x0)     | mem[50] = 0xFFFFFFFF
+0c0004a3   // 140 0x230  sb   x0, 201(x0)      | clear byte 1 only
+0c001523   // 141 0x234  sh   x0, 202(x0)      | clear bytes 3:2 only
+04002783   // 142 0x238  lw   x15, 64(x0)      | restore x15 from mem[16]
+//
 //-----------------------------------------------------------------------------
 // NOTE ON THE BRANCH OFFSET AT idx 13
 //

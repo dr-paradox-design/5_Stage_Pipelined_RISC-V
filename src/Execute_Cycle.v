@@ -112,7 +112,8 @@ module Execute_Cycle (
     output reg         ResultSrcM,
     output reg  [31:0] ALU_ResultM,  // address for a load/store, or the result
     output reg  [31:0] WriteDataM,   // value a store will write
-    output reg  [4:0]  RdM
+    output reg  [4:0]  RdM,
+    output reg  [2:0]  funct3M       // load/store WIDTH (b/h/w, signed/unsigned) for MEM
 );
 
     //-------------------------------------------------------------------------
@@ -424,6 +425,7 @@ module Execute_Cycle (
             ALU_ResultM <= 32'h00000000;
             WriteDataM  <= 32'h00000000;
             RdM         <= 5'b00000;
+            funct3M     <= 3'b000;
         end
         else begin
             RegWriteM   <= RegWriteE;
@@ -432,6 +434,7 @@ module Execute_Cycle (
             ALU_ResultM <= ExResultE;     // load/store address, the answer, or PC+4 for a jump
             WriteDataM  <= ForwardedRD2E; // rs2, AFTER forwarding - see note above
             RdM         <= RdE;
+            funct3M     <= funct3E;     // same field branches use; MEM reads it as the access width
         end
     end
 

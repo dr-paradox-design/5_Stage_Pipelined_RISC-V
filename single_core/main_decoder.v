@@ -45,8 +45,8 @@
 // OPCODES THIS CORE UNDERSTANDS
 //   0110011  R-type    add sub and or xor slt sltu sll srl sra
 //   0010011  I-type    addi andi ori xori slti sltiu slli srli srai
-//   0000011  I-type    lw
-//   0100011  S-type    sw
+//   0000011  I-type    lb lh lw lbu lhu   (width from funct3, see Load_Store_Unit.v)
+//   0100011  S-type    sb sh sw
 //   1100011  B-type    beq bne blt bge bltu bgeu
 //   0110111  U-type    lui
 //   0010111  U-type    auipc

@@ -7,6 +7,7 @@
 `include "Data_Mem.v"
 `include "PC_Adder.v"
 `include "Branch_Condition.v"
+`include "Load_Store_Unit.v"
 
 module Single_Cycle_Top(clk,rst);  
 
@@ -21,6 +22,8 @@ module Single_Cycle_Top(clk,rst);
         wire [2:0] ImmSrc;
         wire [1:0] ALUSrcA;
         wire Jump, Jalr;
+        wire [31:0] Load_Data_Top, Mem_WD_Top;   //extended load value / lane-replicated store data
+        wire [3:0]  Byte_En_Top;                 //per-byte store enables
         wire [31:0] SrcA_Top;
         wire [31:0] WriteData;
 
@@ -42,7 +45,7 @@ module Single_Cycle_Top(clk,rst);
         assign SrcA_Top = (ALUSrcA == 2'b01) ? PC_Top :
                           (ALUSrcA == 2'b10) ? 32'h00000000 : RD1_Top;
         //jal/jalr write the return address PC+4 instead of the ALU result.
-        assign WriteData = ResultSrc ? Read_Data_Top : Jump ? PCPlus4 : ALU_Result_Top;
+        assign WriteData = ResultSrc ? Load_Data_Top : Jump ? PCPlus4 : ALU_Result_Top;
 
         //=====================================================================
         // PC-SOURCE DECISION
@@ -160,12 +163,24 @@ module Single_Cycle_Top(clk,rst);
         .ALUControl(ALU_Control_Top)
     );
 
+    //sb/sh/sw and lb/lh/lw/lbu/lhu - the same module the pipeline uses in MEM
+    Load_Store_Unit Load_Store_Unit(
+        .funct3(RD_Instr[14:12]),
+        .addr_lo(ALU_Result_Top[1:0]),
+        .MemWrite(MemWrite),
+        .StoreData(RD2_Top),
+        .ReadWord(Read_Data_Top),
+        .ByteEnable(Byte_En_Top),
+        .WriteData(Mem_WD_Top),
+        .LoadData(Load_Data_Top)
+    );
+
     Data_Memory Data_Memory(
         .clk(clk),
         .rst(rst),
-        .WE(MemWrite),
+        .WE(Byte_En_Top),
         .A(ALU_Result_Top),
-        .WD(RD2_Top),
+        .WD(Mem_WD_Top),
         .RD(Read_Data_Top)
     );
 

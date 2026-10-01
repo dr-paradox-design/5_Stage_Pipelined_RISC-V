@@ -244,9 +244,18 @@ module Pipeline_Top_TestBench();
         //
         //        t = 600 + 100*277 = 28300
         //
-        // Wait comfortably past 28300 before sampling.
+        // PART 8 (byte / half memory) is straight-line, but it STALLS 8 times:
+        // each of the 7 loads is followed by a store of x15 (real load-use),
+        // plus the opening lui, whose imm bits fake an rs2 = x15 match with the
+        // lw that ended part 7. 26 instructions + 8 bubbles = 34 slots:
+        //
+        //     slot 278..311  0x1d4..0x238  idx117..idx142
+        //
+        //        t = 600 + 100*311 = 31700
+        //
+        // Wait comfortably past 31700 before sampling.
         //---------------------------------------------------------------------
-        #28600;   // now t = 28725
+        #32000;   // now t = 32125
 
         $display("=== 5-stage pipelined RV32I regression (src/program.hex) ===");
 
@@ -336,8 +345,20 @@ module Pipeline_Top_TestBench();
         check_mem(46, 32'h000001c8); //jalr cleared bit 0 of the target (else 0x1c9)
         check_reg(15,  1);           //x15 restored again at the very end
 
+        $display("-- byte / half loads & stores (all acted as lw / sw before)");
+        check_mem(48, 32'h80FF7F01); //the test word itself
+        check_mem(51, 32'hFFFFFFFF); //lb  194 - byte 2 = FF, sign-extended
+        check_mem(52, 32'h000000FF); //lbu 194 - same byte, zero-extended
+        check_mem(53, 32'h0000007F); //lb  193 - positive byte
+        check_mem(54, 32'hFFFF80FF); //lh  194 - upper half, sign-extended
+        check_mem(55, 32'h000080FF); //lhu 194 - upper half, zero-extended
+        check_mem(56, 32'h00007F01); //lh  192 - lower half
+        check_mem(57, 32'hFFFFFF80); //lb  195 - top byte
+        check_mem(49, 32'h34ABCD00); //sb @197 then sh @198 - only their own lanes
+        check_mem(50, 32'h000000FF); //sb 0 @201, sh 0 @202 over 0xFFFFFFFF - byte 0 kept
+
         if (errors == 0)
-            $display("RESULT: PASS - all 63 checks passed");
+            $display("RESULT: PASS - all 73 checks passed");
         else
             $display("RESULT: FAIL - %0d check(s) failed", errors);
 

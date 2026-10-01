@@ -118,6 +118,7 @@
 `include "ALU.v"                 // ALU
 `include "Data_Mem.v"            // Data_Memory
 `include "Branch_Condition.v"    // Branch_Condition - funct3 + flags -> taken
+`include "Load_Store_Unit.v"     // Load_Store_Unit  - byte/half lanes for loads & stores
 
 module Pipeline_Top (
     input wire clk,
@@ -147,6 +148,7 @@ module Pipeline_Top (
 
     // ---- EX/MEM outputs: what memory sees ----
     wire        RegWriteM, MemWriteM, ResultSrcM;
+    wire [2:0]  funct3M;   // load/store width, for the Load_Store_Unit in MEM
     wire [31:0] ALU_ResultM, WriteDataM;
     wire [4:0]  RdM;
 
@@ -258,7 +260,8 @@ module Pipeline_Top (
         .ResultSrcM  (ResultSrcM),
         .ALU_ResultM (ALU_ResultM),
         .WriteDataM  (WriteDataM),
-        .RdM         (RdM)
+        .RdM         (RdM),
+        .funct3M     (funct3M)
     );
 
     //=========================================================================
@@ -273,6 +276,7 @@ module Pipeline_Top (
         .ALU_ResultM (ALU_ResultM),
         .WriteDataM  (WriteDataM),
         .RdM         (RdM),
+        .funct3M     (funct3M),
         .RegWriteW   (RegWriteW),
         .ResultSrcW  (ResultSrcW),
         .ALU_ResultW (ALU_ResultW),
