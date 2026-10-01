@@ -411,6 +411,53 @@ fe0f9ce3   // 43  0xac   bne  x31, x0, -8      | loop while x31 != 0. Branches
            //                                  |  idx36, which had already done
            //                                  |  its job at idx37.
 //
+//=============================================================================
+// PART 4 - I-TYPE ALU OPS (andi / ori / slti)
+//
+//   main_decoder.v used to give opcode 0010011 ALUOp=00 ("just add"), so every
+//   OP-IMM instruction executed as addi no matter what funct3 said. Only addi
+//   was right, and only by coincidence. Each line below has an operand pair
+//   chosen so that the add-instead answer DIFFERS from the correct one.
+//
+//   The register file is full, so results go to DATA MEMORY instead
+//   (mem[17..22], checked by check_mem in the testbench). x15 is the scratch
+//   register: saved to mem[16] first and reloaded at the end, so its check_reg
+//   still sees whatever idx17 originally produced.
+//
+//   Inputs used: x18 = 0xFFFFFFFF, x1 = 5.
+//
+//   instruction            correct       as add (old bug)
+//   ---------------------  ------------  ----------------
+//   andi x15, x18, 0x0f0   0x000000f0    0x000000ef
+//   ori  x15, x1,  0x0f5   0x000000f5    0x000000fa
+//   slti x15, x18, 0       1             0xffffffff
+//   slti x15, x1,  -1      0             4
+//   andi x15, x1,  -1      5             4          (imm is SIGN-extended)
+//   addi x15, x1,  -2      3             3          (guard - see idx58)
+//
+//   xori / sltiu / slli / srli / srai are NOT here yet: the ALU has no xor,
+//   sltu or shifter. They arrive with the 4-bit ALUControl widening.
+//=============================================================================
+04f02023   // 47  0xbc   sw   x15, 64(x0)      | mem[16] = x15 (save scratch)
+0f097793   // 48  0xc0   andi x15, x18, 0x0f0  | 0xf0
+04f02223   // 49  0xc4   sw   x15, 68(x0)      | mem[17]. Store-data forwarding
+           //                                  |  from the line directly above.
+0f50e793   // 50  0xc8   ori  x15, x1, 0x0f5   | 0xf5
+04f02423   // 51  0xcc   sw   x15, 72(x0)      | mem[18]
+00092793   // 52  0xd0   slti x15, x18, 0      | 1   (-1 < 0 signed)
+04f02623   // 53  0xd4   sw   x15, 76(x0)      | mem[19]
+fff0a793   // 54  0xd8   slti x15, x1, -1      | 0   (5 < -1 is false)
+04f02823   // 55  0xdc   sw   x15, 80(x0)      | mem[20]
+fff0f793   // 56  0xe0   andi x15, x1, -1      | 5   (-1 sign-extends to all 1s)
+04f02a23   // 57  0xe4   sw   x15, 84(x0)      | mem[21]
+ffe08793   // 58  0xe8   addi x15, x1, -2      | 3. THE GUARD. imm = 0xffe, so
+           //                                  |  instr bit 30 - the bit R-type
+           //                                  |  uses to mean "sub" - is SET.
+           //                                  |  Only op[5]=0 stops ALU_decoder
+           //                                  |  turning this into 5-(-2) = 7.
+04f02c23   // 59  0xec   sw   x15, 88(x0)      | mem[22]
+04002783   // 60  0xf0   lw   x15, 64(x0)      | restore x15 from mem[16]
+//
 //-----------------------------------------------------------------------------
 // NOTE ON THE BRANCH OFFSET AT idx 13
 //

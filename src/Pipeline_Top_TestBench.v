@@ -77,6 +77,24 @@ module Pipeline_Top_TestBench();
         end
     endtask
 
+    //-------------------------------------------------------------------------
+    // Same idea for one data-memory WORD (index = byte address / 4). Needed
+    // once the register file filled up: newer tests store their results.
+    //-------------------------------------------------------------------------
+    task check_mem;
+        input [9:0]  word;
+        input [31:0] expected;
+        begin
+            if (DUT.Memory.Data_Memory.Mem[word] !== expected) begin
+                $display("  FAIL: mem[%0d] = 0x%h (expected 0x%h)",
+                         word, DUT.Memory.Data_Memory.Mem[word], expected);
+                errors = errors + 1;
+            end
+            else
+                $display("  ok  : mem[%0d] = 0x%h", word, expected);
+        end
+    endtask
+
     initial begin
         rst = 1'b0;
         #125;
@@ -190,9 +208,16 @@ module Pipeline_Top_TestBench();
         // younger than the branch" means when the target happens to be one of
         // the things younger than the branch.
         //
-        // Wait comfortably past 20800 before sampling.
+        // PART 4 (I-type ALU ops) is straight-line code - no branches, and the
+        // closing lw has no consumer, so no stall. 14 instructions, 1 slot each:
+        //
+        //     slot 203..216  0xbc..0xf0  idx47..idx60
+        //
+        //        t = 600 + 100*216 = 22200
+        //
+        // Wait comfortably past 22200 before sampling.
         //---------------------------------------------------------------------
-        #21000;   // now t = 21125
+        #22500;   // now t = 22625
 
         $display("=== 5-stage pipelined RV32I regression (src/program.hex) ===");
 
@@ -242,8 +267,17 @@ module Pipeline_Top_TestBench();
         check_reg(31,  0);           //blt on an OVERFLOWING subtraction was taken
         check_reg(28,  1);           //slt agrees with blt on the overflow case
 
+        $display("-- I-type ALU ops (all but addi executed as add before the ALUOp fix)");
+        check_mem(17, 32'h000000f0); //andi x15, x18, 0x0f0
+        check_mem(18, 32'h000000f5); //ori  x15, x1, 0x0f5
+        check_mem(19, 32'h00000001); //slti x15, x18, 0
+        check_mem(20, 32'h00000000); //slti x15, x1, -1
+        check_mem(21, 32'h00000005); //andi x15, x1, -1   - sign-extended imm
+        check_mem(22, 32'h00000003); //addi x15, x1, -2   - must NOT become sub
+        check_reg(15,  1);           //x15 restored by the closing lw
+
         if (errors == 0)
-            $display("RESULT: PASS - all 31 checks passed");
+            $display("RESULT: PASS - all 38 checks passed");
         else
             $display("RESULT: FAIL - %0d check(s) failed", errors);
 
