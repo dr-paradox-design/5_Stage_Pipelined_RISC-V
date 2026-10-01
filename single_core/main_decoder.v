@@ -45,8 +45,8 @@
 // OPCODES THIS CORE UNDERSTANDS
 //   0110011  R-type    add sub and or slt      (and, once the ALU is widened,
 //                                               xor sll srl sra sltu)
-//   0010011  I-type    addi  (+ the other I-type ALU ops, when ALU_decoder
-//                             learns to read funct3 for them)
+//   0010011  I-type    addi andi ori slti   (xori sltiu slli srli srai
+//                                            once the ALU is widened)
 //   0000011  I-type    lw
 //   0100011  S-type    sw
 //   1100011  B-type    beq bne blt bge bltu bgeu
@@ -80,12 +80,21 @@ module main_decoder(op,RegWrite,MemWrite,ImmSrc,ALUSrc,ResultSrc,Branch,ALUOp);
 
     //ALUOp tells ALU_decoder what KIND of instruction this is, so it knows
     //whether funct3/funct7 are meaningful:
-    //  00 = "just add"  (lw, sw address arithmetic; addi)
+    //  00 = "just add"  (lw, sw address arithmetic)
     //  01 = "subtract"  (all six branches - a subtract is what sets the flags
     //                    that Branch_Condition.v then interprets. Note this is
     //                    the same for bltu as for beq: one subtraction produces
     //                    every comparison at once.)
-    //  10 = "look at funct3/funct7"  (R-type)
-    assign ALUOp = (op == 7'b0110011) ? 2'b10 : (op == 7'b1100011) ? 2'b01 : 2'b00;
+    //  10 = "look at funct3/funct7"  (R-type AND I-type ALU ops)
+    //
+    //FIX: OP-IMM (0010011) used to get 00, so andi/ori/slti all executed as
+    //addi. It now shares 10 with R-type, since funct3 means the same thing in
+    //both. The one trap is add vs sub: an I-type has no funct7, and instr[30]
+    //is just an immediate bit (set for any negative imm, e.g. addi x1,x1,-2).
+    //ALU_decoder only picks sub when {op5,funct7} == 11, and op5 is 0 for
+    //OP-IMM, so addi can never turn into sub. That is exactly why op5 is wired
+    //into ALU_decoder in the first place.
+    assign ALUOp = ((op == 7'b0110011) | (op == 7'b0010011)) ? 2'b10 :
+                   (op == 7'b1100011) ? 2'b01 : 2'b00;
 
 endmodule
