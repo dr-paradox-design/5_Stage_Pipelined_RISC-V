@@ -215,9 +215,16 @@ module Pipeline_Top_TestBench();
         //
         //        t = 600 + 100*216 = 22200
         //
-        // Wait comfortably past 22200 before sampling.
+        // PART 5 (xor / sltu / shifts) is the same shape: straight-line, no
+        // stalls, 25 instructions:
+        //
+        //     slot 217..241  0xf4..0x154  idx61..idx85
+        //
+        //        t = 600 + 100*241 = 24700
+        //
+        // Wait comfortably past 24700 before sampling.
         //---------------------------------------------------------------------
-        #22500;   // now t = 22625
+        #25000;   // now t = 25125
 
         $display("=== 5-stage pipelined RV32I regression (src/program.hex) ===");
 
@@ -276,8 +283,22 @@ module Pipeline_Top_TestBench();
         check_mem(22, 32'h00000003); //addi x15, x1, -2   - must NOT become sub
         check_reg(15,  1);           //x15 restored by the closing lw
 
+        $display("-- xor / sltu / shifts (all executed as add before the 4-bit ALUControl)");
+        check_mem(23, 32'h00000002); //xor   x15, x1, x6
+        check_mem(24, 32'h00000001); //sltu  x15, x19, x18  - 1 < 0xFFFFFFFF unsigned
+        check_mem(25, 32'h00000000); //sltu  x15, x1, x2
+        check_mem(26, 32'd40);       //sll   x15, x1, x2
+        check_mem(27, 32'h80000000); //sll   x15, x19, x18  - shamt is rs2[4:0] only
+        check_mem(28, 32'h10000000); //srl   x15, x30, x2   - zero fill
+        check_mem(29, 32'hF0000000); //sra   x15, x30, x2   - sign fill
+        check_mem(30, 32'hFFFFFFFA); //xori  x15, x1, -1
+        check_mem(31, 32'h00000001); //sltiu x15, x19, -1   - imm sign-extends first
+        check_mem(32, 32'd80);       //slli  x15, x1, 4
+        check_mem(33, 32'h08000000); //srli  x15, x30, 4
+        check_mem(34, 32'hF8000000); //srai  x15, x30, 4    - instr[30] selects sra
+
         if (errors == 0)
-            $display("RESULT: PASS - all 38 checks passed");
+            $display("RESULT: PASS - all 50 checks passed");
         else
             $display("RESULT: FAIL - %0d check(s) failed", errors);
 

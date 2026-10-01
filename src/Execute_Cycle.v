@@ -80,7 +80,7 @@ module Execute_Cycle (
     input  wire        ResultSrcE,
     input  wire        BranchE,      // raw branch-opcode bit (NOT "taken")
     input  wire [2:0]  funct3E,      // WHICH branch comparison: beq/bne/blt/...
-    input  wire [2:0]  ALUControlE,
+    input  wire [3:0]  ALUControlE,
     input  wire [31:0] RD1E,
     input  wire [31:0] RD2E,
     input  wire [31:0] ImmExtE,

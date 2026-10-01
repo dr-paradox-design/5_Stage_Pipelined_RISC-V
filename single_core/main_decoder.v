@@ -43,10 +43,8 @@
 //
 //-----------------------------------------------------------------------------
 // OPCODES THIS CORE UNDERSTANDS
-//   0110011  R-type    add sub and or slt      (and, once the ALU is widened,
-//                                               xor sll srl sra sltu)
-//   0010011  I-type    addi andi ori slti   (xori sltiu slli srli srai
-//                                            once the ALU is widened)
+//   0110011  R-type    add sub and or xor slt sltu sll srl sra
+//   0010011  I-type    addi andi ori xori slti sltiu slli srli srai
 //   0000011  I-type    lw
 //   0100011  S-type    sw
 //   1100011  B-type    beq bne blt bge bltu bgeu

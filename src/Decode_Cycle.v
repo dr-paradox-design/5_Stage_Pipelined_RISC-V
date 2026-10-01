@@ -94,7 +94,7 @@ module Decode_Cycle (
     output reg         MemWriteE,    // control: store to data memory in MEM
     output reg         ResultSrcE,   // control: WB value = load data, not ALU
     output reg         BranchE,      // control: this is a branch opcode
-    output reg  [2:0]  ALUControlE,  // control: which ALU operation
+    output reg  [3:0]  ALUControlE,  // control: which ALU operation
     output reg  [2:0]  funct3E,      // control: WHICH branch comparison (EX)
     output reg  [31:0] RD1E,         // data: rs1 value
     output reg  [31:0] RD2E,         // data: rs2 value
@@ -114,7 +114,7 @@ module Decode_Cycle (
     wire        ResultSrcD;
     wire        BranchD;
     wire [1:0]  ImmSrcD;
-    wire [2:0]  ALUControlD;
+    wire [3:0]  ALUControlD;
     wire [31:0] RD1D, RD2D;
     wire [31:0] ImmExtD;
 
@@ -345,7 +345,7 @@ module Decode_Cycle (
             MemWriteE   <= 1'b0;
             ResultSrcE  <= 1'b0;
             BranchE     <= 1'b0;
-            ALUControlE <= 3'b000;
+            ALUControlE <= 4'b0000;
             funct3E     <= 3'b000;
             RD1E        <= 32'h00000000;
             RD2E        <= 32'h00000000;

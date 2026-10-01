@@ -16,7 +16,7 @@ module Single_Cycle_Top(clk,rst);
         //Previously PC_Module's PC_NEXT was driven directly by PCPlus4 with no way to
         //ever redirect the PC on a taken branch.
         wire [31:0] PC_Top, RD_Instr, RD1_Top, RD2_Top, Imm_Ext_Top, SrcB_Top, ALU_Result_Top, Read_Data_Top, PCPlus4, PCTarget, PC_Next_Top;
-        wire [2:0] ALU_Control_Top;
+        wire [3:0] ALU_Control_Top;
         wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch;
         wire [1:0] ImmSrc;
         wire [31:0] WriteData;

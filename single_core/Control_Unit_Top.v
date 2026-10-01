@@ -56,7 +56,7 @@ module Control_Unit_Top(Op,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch,func
     input [2:0]funct3;
     output RegWrite,ALUSrc,MemWrite,ResultSrc,Branch;
     output [1:0]ImmSrc;
-    output [2:0]ALUControl;
+    output [3:0]ALUControl;
 
     wire [1:0]ALUOp;
 

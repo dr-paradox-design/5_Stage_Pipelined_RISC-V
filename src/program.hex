@@ -435,8 +435,8 @@ fe0f9ce3   // 43  0xac   bne  x31, x0, -8      | loop while x31 != 0. Branches
 //   andi x15, x1,  -1      5             4          (imm is SIGN-extended)
 //   addi x15, x1,  -2      3             3          (guard - see idx58)
 //
-//   xori / sltiu / slli / srli / srai are NOT here yet: the ALU has no xor,
-//   sltu or shifter. They arrive with the 4-bit ALUControl widening.
+//   xori / sltiu / slli / srli / srai are in PART 5: they needed the ALU
+//   widened first (xor, sltu, shifter).
 //=============================================================================
 04f02023   // 47  0xbc   sw   x15, 64(x0)      | mem[16] = x15 (save scratch)
 0f097793   // 48  0xc0   andi x15, x18, 0x0f0  | 0xf0
@@ -457,6 +457,68 @@ ffe08793   // 58  0xe8   addi x15, x1, -2      | 3. THE GUARD. imm = 0xffe, so
            //                                  |  turning this into 5-(-2) = 7.
 04f02c23   // 59  0xec   sw   x15, 88(x0)      | mem[22]
 04002783   // 60  0xf0   lw   x15, 64(x0)      | restore x15 from mem[16]
+//
+//=============================================================================
+// PART 5 - XOR, SLTU AND THE SHIFTER (R-type and I-type)
+//
+//   The ALU had no xor, no unsigned compare and no shifter, and ALU_decoder
+//   sent every funct3 it did not recognise to 000 = add. So all ten of
+//   xor sltu sll srl sra  xori sltiu slli srli srai  silently added. Same
+//   scratch scheme as part 4: x15 computes, results land in mem[23..34], and
+//   x15 is reloaded from mem[16] at the end.
+//
+//   Inputs used: x1 = 5, x2 = 3, x6 = 7, x18 = 0xFFFFFFFF, x19 = 1,
+//                x30 = 0x80000000.
+//
+//   instruction             correct       as add (old)  what it pins down
+//   ----------------------  ------------  ------------  -------------------
+//   xor   x15, x1, x6       2             12
+//   sltu  x15, x19, x18     1             0             1 < 0xFFFFFFFF unsigned
+//                                                       (signed slt says 0)
+//   sltu  x15, x1, x2       0             8             5 < 3 is false
+//   sll   x15, x1, x2       40            8
+//   sll   x15, x19, x18     0x80000000    0             only rs2[4:0] = 31 is
+//                                                       the shift amount
+//   srl   x15, x30, x2      0x10000000    0x80000003    zeros shifted in
+//   sra   x15, x30, x2      0xF0000000    0x80000003    sign bit shifted in
+//   xori  x15, x1, -1       0xFFFFFFFA    4             xori -1 is bitwise NOT
+//   sltiu x15, x19, -1      1             0             imm sign-extends to
+//                                                       0xFFFFFFFF, THEN is
+//                                                       compared unsigned
+//   slli  x15, x1, 4        80            9
+//   srli  x15, x30, 4       0x08000000    0x80000004
+//   srai  x15, x30, 4       0xF8000000    0x80000404    instr[30] picks sra
+//                                                       over srl, as in R-type
+//=============================================================================
+0060c7b3   // 61  0xf4   xor  x15, x1, x6      | 2
+04f02e23   // 62  0xf8   sw   x15, 92(x0)      | mem[23]
+0129b7b3   // 63  0xfc   sltu x15, x19, x18    | 1
+06f02023   // 64  0x100  sw   x15, 96(x0)      | mem[24]
+0020b7b3   // 65  0x104  sltu x15, x1, x2      | 0
+06f02223   // 66  0x108  sw   x15, 100(x0)     | mem[25]
+002097b3   // 67  0x10c  sll  x15, x1, x2      | 40
+06f02423   // 68  0x110  sw   x15, 104(x0)     | mem[26]
+012997b3   // 69  0x114  sll  x15, x19, x18    | 0x80000000. x18 is all ones;
+           //                                  |  a shifter that used all 32
+           //                                  |  bits of rs2 would give 0.
+06f02623   // 70  0x118  sw   x15, 108(x0)     | mem[27]
+002f57b3   // 71  0x11c  srl  x15, x30, x2     | 0x10000000
+06f02823   // 72  0x120  sw   x15, 112(x0)     | mem[28]
+402f57b3   // 73  0x124  sra  x15, x30, x2     | 0xF0000000
+06f02a23   // 74  0x128  sw   x15, 116(x0)     | mem[29]
+fff0c793   // 75  0x12c  xori x15, x1, -1      | 0xFFFFFFFA
+06f02c23   // 76  0x130  sw   x15, 120(x0)     | mem[30]
+fff9b793   // 77  0x134  sltiu x15, x19, -1    | 1
+06f02e23   // 78  0x138  sw   x15, 124(x0)     | mem[31]
+00409793   // 79  0x13c  slli x15, x1, 4       | 80
+08f02023   // 80  0x140  sw   x15, 128(x0)     | mem[32]
+004f5793   // 81  0x144  srli x15, x30, 4      | 0x08000000
+08f02223   // 82  0x148  sw   x15, 132(x0)     | mem[33]
+404f5793   // 83  0x14c  srai x15, x30, 4      | 0xF8000000. imm field is
+           //                                  |  0x404: the 0x400 is the sra
+           //                                  |  selector, NOT part of shamt.
+08f02423   // 84  0x150  sw   x15, 136(x0)     | mem[34]
+04002783   // 85  0x154  lw   x15, 64(x0)      | restore x15 from mem[16]
 //
 //-----------------------------------------------------------------------------
 // NOTE ON THE BRANCH OFFSET AT idx 13

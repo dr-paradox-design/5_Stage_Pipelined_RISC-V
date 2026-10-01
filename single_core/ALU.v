@@ -1,7 +1,7 @@
 module ALU(A,B,ALUControl,Result,Z,N,C,V);
     //declaring inputs and outputs
     input [31:0] A,B;
-    input [2:0] ALUControl;
+    input [3:0] ALUControl;   //WIDENED from [2:0]: 5 ops did not leave room for 10
     output [31:0] Result;
     output Z,N,C,V;
 
@@ -15,6 +15,10 @@ module ALU(A,B,ALUControl,Result,Z,N,C,V);
     wire [31:0] sum;
     wire [31:0] mux_2;
     wire [31:0] slt;
+    wire [31:0] sltu;
+    wire [31:0] a_xor_b;
+    wire [31:0] sll_r, srl_r, sra_r;
+    wire [4:0]  shamt;
 
 
     wire Cout;
@@ -57,13 +61,41 @@ module ALU(A,B,ALUControl,Result,Z,N,C,V);
     //continuous assignments - they are wires, not statements.
     assign slt = {31'b0, sum[31] ^ V};
 
-    //designing 4by1 mux
-    assign mux_2 = (ALUControl[2:0] == 3'b000) ? sum : 
-                   (ALUControl[2:0] == 3'b001) ? sum : 
-                   (ALUControl[2:0] == 3'b010) ? a_and_b : 
-                   (ALUControl[2:0] == 3'b011) ? a_or_b :
-                   (ALUControl[2:0] == 3'b101) ? slt  : 
-                   32'h00000000; //if ALUControl is 000 then sum is selected, if ALUControl is 001 then sum is selected, if ALUControl is 010 then a_and_b is selected, if ALUControl is 011 then a_or_b is selected, if ALUControl is 101 then slt is selected, else 0 is selected              
+    //SET-LESS-THAN UNSIGNED. Same subtraction as slt, different reading of it:
+    //for A - B computed as A + ~B + 1, the carry-out is 1 exactly when no
+    //borrow happened, i.e. A >= B unsigned. So A < B unsigned is ~Cout. This is
+    //the same fact Branch_Condition.v uses for bltu (taken = ~C).
+    assign sltu = {31'b0, ~Cout};
+
+    assign a_xor_b = A ^ B;
+
+    //SHIFTER. RV32I only ever uses the low 5 bits of the shift amount, for both
+    //the register form (rs2[4:0]) and the immediate form (imm[4:0] - the upper
+    //imm bits of slli/srli/srai are an opcode extension, not part of shamt).
+    //Using all of B would make  sll x,1,0xFFFFFFFF  give 0 instead of 1<<31.
+    assign shamt = B[4:0];
+    assign sll_r = A << shamt;
+    assign srl_r = A >> shamt;
+    assign sra_r = $signed(A) >>> shamt;   //>>> on a SIGNED operand copies the sign bit in
+
+    //RESULT MUX. ALUControl encoding (ALU_decoder.v produces these):
+    //   0000 add    0001 sub    0010 and    0011 or
+    //   0100 xor    0101 slt    0111 sltu
+    //   1000 sll    1001 srl    1010 sra
+    //The original five codes are unchanged, so the flag logic below - which
+    //keys off bit0 ("subtract") and bit1 ("logical op, no C/V") - still means
+    //the same thing. slt and sltu both have bit0 = 1 so the adder subtracts.
+    assign mux_2 = (ALUControl == 4'b0000) ? sum :
+                   (ALUControl == 4'b0001) ? sum :
+                   (ALUControl == 4'b0010) ? a_and_b :
+                   (ALUControl == 4'b0011) ? a_or_b :
+                   (ALUControl == 4'b0100) ? a_xor_b :
+                   (ALUControl == 4'b0101) ? slt :
+                   (ALUControl == 4'b0111) ? sltu :
+                   (ALUControl == 4'b1000) ? sll_r :
+                   (ALUControl == 4'b1001) ? srl_r :
+                   (ALUControl == 4'b1010) ? sra_r :
+                   32'h00000000;
     assign Result = mux_2;
 
     //flags asssign
