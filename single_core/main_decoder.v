@@ -48,6 +48,8 @@
 //   0000011  I-type    lw
 //   0100011  S-type    sw
 //   1100011  B-type    beq bne blt bge bltu bgeu
+//   0110111  U-type    lui
+//   0010111  U-type    auipc
 //
 //   Anything else decodes to all-zeros: no register write, no memory write, no
 //   branch. Architecturally inert rather than actively destructive. This core
@@ -57,16 +59,32 @@
 //   them.
 //=============================================================================
 
-module main_decoder(op,RegWrite,MemWrite,ImmSrc,ALUSrc,ResultSrc,Branch,ALUOp);
+module main_decoder(op,RegWrite,MemWrite,ImmSrc,ALUSrc,ALUSrcA,ResultSrc,Branch,ALUOp);
     //input and output declaration
     input [6:0] op;
     output RegWrite,MemWrite,ALUSrc,Branch,ResultSrc ;
-    output [1:0] ImmSrc,ALUOp;
+    output [1:0] ALUOp;
+    output [2:0] ImmSrc;   //WIDENED from [1:0]: U-type is the 4th format, J-type will be the 5th
+    output [1:0] ALUSrcA;  //NEW: ALU operand A = rs1 (00), PC (01) or zero (10)
 
-    //if op is 0110011 or 0000011 or 0010011 then RegWrite=1 else RegWrite=0
-    assign RegWrite = (op == 7'b0110011) | (op == 7'b0000011) | (op == 7'b0010011) ? 1'b1 : 1'b0;
+    wire lui   = (op == 7'b0110111);
+    wire auipc = (op == 7'b0010111);
+
+    //if op is 0110011 or 0000011 or 0010011 (or lui/auipc) then RegWrite=1 else RegWrite=0
+    assign RegWrite = (op == 7'b0110011) | (op == 7'b0000011) | (op == 7'b0010011) | lui | auipc ? 1'b1 : 1'b0;
     assign MemWrite = (op == 7'b0100011) ? 1'b1 : 1'b0;
-    assign ALUSrc = (op == 7'b0000011) | (op == 7'b0010011) | (op == 7'b0100011) ? 1'b1 : 1'b0;
+    assign ALUSrc = (op == 7'b0000011) | (op == 7'b0010011) | (op == 7'b0100011) | lui | auipc ? 1'b1 : 1'b0;
+
+    //lui and auipc are both just "A + imm" with ALUOp = 00 (add) and the
+    //U-type immediate {instr[31:12], 12'b0} on operand B. The only thing that
+    //differs between them is operand A:
+    //    lui   : 0  + imm   -> loads the upper 20 bits, clears the low 12
+    //    auipc : PC + imm   -> PC-relative address (how code finds its data)
+    //Neither has an rs1, so ALU input A must not come from the register file.
+    //Bits [19:15] of these instructions are IMMEDIATE bits that happen to sit
+    //where rs1 normally is - any forwarding the EX stage decides on for them
+    //is simply overridden by this mux.
+    assign ALUSrcA = lui ? 2'b10 : auipc ? 2'b01 : 2'b00;
     assign ResultSrc = (op == 7'b0000011) ? 1'b1 : 1'b0; //if op is 0000011 then ResultSrc=1 else ResultSrc=0
 
     //RAW branch-opcode bit ONLY - "this is one of the six B-type branches".
@@ -74,7 +92,10 @@ module main_decoder(op,RegWrite,MemWrite,ImmSrc,ALUSrc,ResultSrc,Branch,ALUOp);
     //flags, in whichever stage those flags exist. See the header above.
     assign Branch = (op == 7'b1100011) ? 1'b1 : 1'b0;
 
-    assign ImmSrc = (op == 7'b0100011) ? 2'b01 :( op == 7'b1100011) ? 2'b10 : 2'b0;
+    //000 = I, 001 = S, 010 = B, 011 = U  (see Sign_Extend.v)
+    assign ImmSrc = (op == 7'b0100011) ? 3'b001 :
+                    (op == 7'b1100011) ? 3'b010 :
+                    (lui | auipc)      ? 3'b011 : 3'b000;
 
     //ALUOp tells ALU_decoder what KIND of instruction this is, so it knows
     //whether funct3/funct7 are meaningful:

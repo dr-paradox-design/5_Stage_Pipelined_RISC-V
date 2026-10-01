@@ -50,12 +50,13 @@
 `include "ALU_decoder.v"
 `include "main_decoder.v"
 
-module Control_Unit_Top(Op,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch,funct3,funct7,ALUControl);
+module Control_Unit_Top(Op,RegWrite,ImmSrc,ALUSrc,ALUSrcA,MemWrite,ResultSrc,Branch,funct3,funct7,ALUControl);
 
     input [6:0]Op,funct7;
     input [2:0]funct3;
     output RegWrite,ALUSrc,MemWrite,ResultSrc,Branch;
-    output [1:0]ImmSrc;
+    output [2:0]ImmSrc;    //I/S/B/U
+    output [1:0]ALUSrcA;   //ALU operand A: rs1 / PC / zero (for auipc / lui)
     output [3:0]ALUControl;
 
     wire [1:0]ALUOp;
@@ -66,6 +67,7 @@ module Control_Unit_Top(Op,RegWrite,ImmSrc,ALUSrc,MemWrite,ResultSrc,Branch,func
         .MemWrite(MemWrite),
         .ImmSrc(ImmSrc),
         .ALUSrc(ALUSrc),
+        .ALUSrcA(ALUSrcA),
         .ResultSrc(ResultSrc),
         .Branch(Branch),      //raw "is a branch opcode" - NOT "branch taken"
         .ALUOp(ALUOp)

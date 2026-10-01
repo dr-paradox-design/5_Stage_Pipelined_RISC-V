@@ -222,9 +222,15 @@ module Pipeline_Top_TestBench();
         //
         //        t = 600 + 100*241 = 24700
         //
-        // Wait comfortably past 24700 before sampling.
+        // PART 6 (lui / auipc) is straight-line too. 12 instructions:
+        //
+        //     slot 242..253  0x158..0x184  idx86..idx97
+        //
+        //        t = 600 + 100*253 = 25900
+        //
+        // Wait comfortably past 25900 before sampling.
         //---------------------------------------------------------------------
-        #25000;   // now t = 25125
+        #26200;   // now t = 26325
 
         $display("=== 5-stage pipelined RV32I regression (src/program.hex) ===");
 
@@ -297,8 +303,15 @@ module Pipeline_Top_TestBench();
         check_mem(33, 32'h08000000); //srli  x15, x30, 4
         check_mem(34, 32'hF8000000); //srai  x15, x30, 4    - instr[30] selects sra
 
+        $display("-- lui / auipc (both were silent no-ops before U-type support)");
+        check_mem(35, 32'h12345000); //lui   x15, 0x12345
+        check_mem(36, 32'hFFFFF000); //lui   x15, 0xfffff
+        check_mem(37, 32'h00000168); //auipc x15, 0   at 0x168
+        check_mem(38, 32'h00001170); //auipc x15, 1   at 0x170
+        check_mem(39, 32'h00078000); //lui   x15, 0x78 - rs1 field matches RdM; must NOT forward
+
         if (errors == 0)
-            $display("RESULT: PASS - all 50 checks passed");
+            $display("RESULT: PASS - all 55 checks passed");
         else
             $display("RESULT: FAIL - %0d check(s) failed", errors);
 

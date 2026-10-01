@@ -76,6 +76,7 @@ module Execute_Cycle (
     // ---- forward path in, from the ID/EX register -------------------------
     input  wire        RegWriteE,
     input  wire        ALUSrcE,
+    input  wire [1:0]  ALUSrcAE,     // ALU operand A: 00 rs1, 01 PC (auipc), 10 zero (lui)
     input  wire        MemWriteE,
     input  wire        ResultSrcE,
     input  wire        BranchE,      // raw branch-opcode bit (NOT "taken")
@@ -216,11 +217,21 @@ module Execute_Cycle (
     // freshly forwarded one.
     //-------------------------------------------------------------------------
     wire [31:0] SrcAE;
+    wire [31:0] ForwardedRD1E;
     wire [31:0] ForwardedRD2E;
 
-    assign SrcAE = (ForwardAE == 2'b10) ? ALU_ResultM :
-                   (ForwardAE == 2'b01) ? ResultW     :
-                                          RD1E;
+    assign ForwardedRD1E = (ForwardAE == 2'b10) ? ALU_ResultM :
+                           (ForwardAE == 2'b01) ? ResultW     :
+                                                  RD1E;
+
+    // Operand-A select, AFTER forwarding. lui/auipc have no rs1: bits [19:15]
+    // are part of their immediate, so the forwarding unit may "match" them
+    // against RdM/RdW by accident. Selecting PC or 0 here throws that bogus
+    // forward away, which is why this mux sits after the forwarding mux and
+    // not before it.
+    assign SrcAE = (ALUSrcAE == 2'b01) ? PCE          :
+                   (ALUSrcAE == 2'b10) ? 32'h00000000 :
+                                         ForwardedRD1E;
 
     assign ForwardedRD2E = (ForwardBE == 2'b10) ? ALU_ResultM :
                             (ForwardBE == 2'b01) ? ResultW     :

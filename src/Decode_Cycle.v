@@ -91,6 +91,7 @@ module Decode_Cycle (
     // ---- forward path out, into execute (outputs of the ID/EX register) ---
     output reg         RegWriteE,    // control: write a register in WB
     output reg         ALUSrcE,      // control: ALU operand B = imm, not rs2
+    output reg  [1:0]  ALUSrcAE,     // control: ALU operand A = rs1 / PC / 0
     output reg         MemWriteE,    // control: store to data memory in MEM
     output reg         ResultSrcE,   // control: WB value = load data, not ALU
     output reg         BranchE,      // control: this is a branch opcode
@@ -113,7 +114,8 @@ module Decode_Cycle (
     wire        MemWriteD;
     wire        ResultSrcD;
     wire        BranchD;
-    wire [1:0]  ImmSrcD;
+    wire [2:0]  ImmSrcD;
+    wire [1:0]  ALUSrcAD;
     wire [3:0]  ALUControlD;
     wire [31:0] RD1D, RD2D;
     wire [31:0] ImmExtD;
@@ -160,6 +162,7 @@ module Decode_Cycle (
         .RegWrite   (RegWriteD),
         .ImmSrc     (ImmSrcD),
         .ALUSrc     (ALUSrcD),
+        .ALUSrcA    (ALUSrcAD),
         .MemWrite   (MemWriteD),
         .ResultSrc  (ResultSrcD),
         .Branch     (BranchD),       // = raw branch-opcode bit, NOT "branch taken"
@@ -342,6 +345,7 @@ module Decode_Cycle (
         if (!rst || FlushE) begin
             RegWriteE   <= 1'b0;
             ALUSrcE     <= 1'b0;
+            ALUSrcAE    <= 2'b00;
             MemWriteE   <= 1'b0;
             ResultSrcE  <= 1'b0;
             BranchE     <= 1'b0;
@@ -359,6 +363,7 @@ module Decode_Cycle (
             // ---- the control backpack ----
             RegWriteE   <= RegWriteD;
             ALUSrcE     <= ALUSrcD;
+            ALUSrcAE    <= ALUSrcAD;
             MemWriteE   <= MemWriteD;
             ResultSrcE  <= ResultSrcD;
             BranchE     <= BranchD;

@@ -18,7 +18,9 @@ module Single_Cycle_Top(clk,rst);
         wire [31:0] PC_Top, RD_Instr, RD1_Top, RD2_Top, Imm_Ext_Top, SrcB_Top, ALU_Result_Top, Read_Data_Top, PCPlus4, PCTarget, PC_Next_Top;
         wire [3:0] ALU_Control_Top;
         wire RegWrite, ALUSrc, MemWrite, ResultSrc, Branch;
-        wire [1:0] ImmSrc;
+        wire [2:0] ImmSrc;
+        wire [1:0] ALUSrcA;
+        wire [31:0] SrcA_Top;
         wire [31:0] WriteData;
 
         //ALU condition flags. Zero_Top was already used; N/C/V are NEW here -
@@ -35,6 +37,9 @@ module Single_Cycle_Top(clk,rst);
         wire PCSrc;
 
         assign SrcB_Top = ALUSrc ? Imm_Ext_Top : RD2_Top;
+        //Operand A: rs1 normally, PC for auipc, 0 for lui (both are A + U-imm).
+        assign SrcA_Top = (ALUSrcA == 2'b01) ? PC_Top :
+                          (ALUSrcA == 2'b10) ? 32'h00000000 : RD1_Top;
         assign WriteData = ResultSrc ? Read_Data_Top : ALU_Result_Top;
 
         //=====================================================================
@@ -102,7 +107,7 @@ module Single_Cycle_Top(clk,rst);
     );
 
     ALU ALU(
-        .A(RD1_Top),
+        .A(SrcA_Top),
         .B(SrcB_Top),
         .ALUControl(ALU_Control_Top),
         .Result(ALU_Result_Top),
@@ -140,6 +145,7 @@ module Single_Cycle_Top(clk,rst);
         .RegWrite(RegWrite),
         .ImmSrc(ImmSrc),
         .ALUSrc(ALUSrc),
+        .ALUSrcA(ALUSrcA),
         .MemWrite(MemWrite),
         .ResultSrc(ResultSrc),
         .Branch(Branch),   //raw opcode bit now, ANDed with BranchTaken above

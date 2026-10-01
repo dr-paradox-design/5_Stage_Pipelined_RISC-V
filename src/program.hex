@@ -520,6 +520,40 @@ fff9b793   // 77  0x134  sltiu x15, x19, -1    | 1
 08f02423   // 84  0x150  sw   x15, 136(x0)     | mem[34]
 04002783   // 85  0x154  lw   x15, 64(x0)      | restore x15 from mem[16]
 //
+//=============================================================================
+// PART 6 - lui AND auipc (U-type)
+//
+//   Both opcodes used to decode to all-zeros (RegWrite = 0), so they were
+//   silent no-ops: x15 just kept its old value and every store below wrote 1.
+//
+//   instruction             correct       before (no-op)  what it pins down
+//   ----------------------  ------------  --------------  -------------------
+//   lui   x15, 0x12345      0x12345000    1               low 12 bits cleared
+//   lui   x15, 0xfffff      0xFFFFF000    1               top bit set, no extend
+//   auipc x15, 0   @0x168   0x00000168    1               operand A really is PC
+//   auipc x15, 1   @0x170   0x00001170    1               PC + (1 << 12)
+//   lui   x15, 0x78         0x00078000    99              THE FORWARDING TRAP
+//
+//   The trap: a U-type has no rs1, but instr[19:15] still holds immediate
+//   bits. For lui x15,0x78 those bits are 01111 = 15 - so the forwarding unit
+//   sees "rs1 = x15, and the instruction 1 ahead writes x15" and forwards 99.
+//   Only the ALUSrcA mux sitting AFTER the forwarding mux (Execute_Cycle.v)
+//   throws that away. Get the order of those two muxes wrong and this line
+//   produces 99 + 0x78000.
+//=============================================================================
+123457b7   // 86  0x158  lui  x15, 0x12345     | 0x12345000
+08f02623   // 87  0x15c  sw   x15, 140(x0)     | mem[35]
+fffff7b7   // 88  0x160  lui  x15, 0xfffff     | 0xFFFFF000
+08f02823   // 89  0x164  sw   x15, 144(x0)     | mem[36]
+00000797   // 90  0x168  auipc x15, 0          | 0x168 = its own address
+08f02a23   // 91  0x16c  sw   x15, 148(x0)     | mem[37]
+00001797   // 92  0x170  auipc x15, 1          | 0x170 + 0x1000 = 0x1170
+08f02c23   // 93  0x174  sw   x15, 152(x0)     | mem[38]
+06300793   // 94  0x178  addi x15, x0, 99      | bait for the forwarding trap
+000787b7   // 95  0x17c  lui  x15, 0x78        | 0x78000. rs1 FIELD = 15 = RdM.
+08f02e23   // 96  0x180  sw   x15, 156(x0)     | mem[39]
+04002783   // 97  0x184  lw   x15, 64(x0)      | restore x15 from mem[16]
+//
 //-----------------------------------------------------------------------------
 // NOTE ON THE BRANCH OFFSET AT idx 13
 //
